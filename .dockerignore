@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent directories
+.claude/
+.specify/
+
+# Docs (not needed in container)
+docs/
+*.md
+!README.md
+
+# Test files
+*_test.go
+coverage.*
+
+# Development files
+Makefile
+docker-compose*.yml
+.air.toml
+
+# GitHub
+.github/
