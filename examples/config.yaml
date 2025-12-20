@@ -1,0 +1,14 @@
+telegram:
+  token: "${BOT_TOKEN}"
+  allowed_chat_ids:
+    - 123456789  # Replace with your Telegram chat ID
+
+commands_dir: "./commands"
+plugins_dir: "./plugins"
+
+database:
+  path: "./audit.db"
+
+defaults:
+  timeout: 60s
+  max_output: 5000

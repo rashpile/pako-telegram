@@ -1,0 +1,5 @@
+name: ps
+description: "List running processes"
+command: "ps aux | head -20"
+timeout: 10s
+max_output: 3000

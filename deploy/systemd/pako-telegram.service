@@ -1,0 +1,23 @@
+[Unit]
+Description=Pako Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/local/bin/pako-telegram -config /home/%i/.config/pako-telegram/config.yaml
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/.local/state/pako-telegram
+PrivateTmp=true
+
+# Environment
+Environment=BOT_TOKEN=
+
+[Install]
+WantedBy=multi-user.target

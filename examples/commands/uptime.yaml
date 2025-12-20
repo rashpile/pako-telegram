@@ -1,0 +1,4 @@
+name: uptime
+description: "Show system uptime"
+command: "uptime"
+timeout: 10s

@@ -1,0 +1,5 @@
+name: shutdown
+description: "Shutdown the system (DANGEROUS)"
+command: "echo 'Would run: sudo shutdown -h now'"
+timeout: 30s
+confirm: true

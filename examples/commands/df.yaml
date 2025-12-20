@@ -1,0 +1,4 @@
+name: df
+description: "Show disk space usage"
+command: "df -h"
+timeout: 10s
