@@ -165,6 +165,7 @@ func (b *Bot) handleCallback(ctx context.Context, query *tgbotapi.CallbackQuery)
 		cmd := b.registry.Get(pending.Command)
 		if cmd != nil {
 			b.executeCommand(ctx, chatID, cmd, pending.Args)
+			b.sendMenu(chatID)
 		}
 	}
 }
@@ -290,6 +291,9 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 
 	logger.Info("executing command", "args_count", len(args))
 	b.executeCommand(ctx, chatID, cmd, args)
+
+	// Show menu for quick access to next command
+	b.sendMenu(chatID)
 }
 
 // executeCommand runs a command and streams output.
