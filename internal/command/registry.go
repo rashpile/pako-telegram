@@ -2,6 +2,7 @@
 package command
 
 import (
+	"sort"
 	"sync"
 
 	pkgcmd "github.com/rashpile/pako-telegram/pkg/command"
@@ -67,4 +68,99 @@ func (r *Registry) Reload(commands []pkgcmd.Command) {
 	}
 
 	r.commands = newCommands
+}
+
+// CategoryWithCommands holds a category and its commands.
+type CategoryWithCommands struct {
+	Name     string
+	Icon     string
+	Commands []pkgcmd.Command
+}
+
+// Categories returns commands grouped by category, sorted alphabetically.
+// Commands without a category are grouped under "other".
+func (r *Registry) Categories() []CategoryWithCommands {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Group commands by category
+	groups := make(map[string]*CategoryWithCommands)
+
+	for _, cmd := range r.commands {
+		catName := "other"
+		catIcon := ""
+
+		if withCat, ok := cmd.(pkgcmd.WithCategory); ok {
+			info := withCat.Category()
+			if info.Name != "" {
+				catName = info.Name
+				catIcon = info.Icon
+			}
+		}
+
+		group, exists := groups[catName]
+		if !exists {
+			group = &CategoryWithCommands{
+				Name: catName,
+				Icon: catIcon,
+			}
+			groups[catName] = group
+		}
+		// Update icon if we have one and the group doesn't
+		if catIcon != "" && group.Icon == "" {
+			group.Icon = catIcon
+		}
+		group.Commands = append(group.Commands, cmd)
+	}
+
+	// Convert to slice and sort
+	result := make([]CategoryWithCommands, 0, len(groups))
+	for _, group := range groups {
+		// Sort commands within category
+		sort.Slice(group.Commands, func(i, j int) bool {
+			return group.Commands[i].Name() < group.Commands[j].Name()
+		})
+		result = append(result, *group)
+	}
+
+	// Sort categories (other always last)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == "other" {
+			return false
+		}
+		if result[j].Name == "other" {
+			return true
+		}
+		return result[i].Name < result[j].Name
+	})
+
+	return result
+}
+
+// ByCategory returns commands in a specific category.
+func (r *Registry) ByCategory(category string) []pkgcmd.Command {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var cmds []pkgcmd.Command
+	for _, cmd := range r.commands {
+		catName := "other"
+		if withCat, ok := cmd.(pkgcmd.WithCategory); ok {
+			info := withCat.Category()
+			if info.Name != "" {
+				catName = info.Name
+			}
+		}
+
+		if catName == category {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	// Sort by name
+	sort.Slice(cmds, func(i, j int) bool {
+		return cmds[i].Name() < cmds[j].Name()
+	})
+
+	return cmds
 }

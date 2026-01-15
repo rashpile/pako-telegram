@@ -1,5 +1,14 @@
 name: ps
-description: "List running processes"
-command: "ps aux | head -20"
+description: "Top processes by CPU/memory"
+command: |
+  echo "=== Top Processes ==="
+  echo ""
+  echo "By CPU:"
+  ps -Ao %cpu,comm -r | head -6 | tail -5 | awk '{printf "  %5.1f%%  %s\n", $1, $2}'
+  echo ""
+  echo "By Memory:"
+  ps -Ao %mem,comm -m | head -6 | tail -5 | awk '{printf "  %5.1f%%  %s\n", $1, $2}'
 timeout: 10s
-max_output: 3000
+max_output: 2000
+category: system
+icon: "📊"

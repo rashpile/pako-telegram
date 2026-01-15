@@ -1,4 +1,15 @@
 name: df
-description: "Show disk space usage"
-command: "df -h"
+description: "Disk space usage"
+command: |
+  echo "=== Disk Usage ==="
+  df -h / /System/Volumes/Data 2>/dev/null | awk 'NR>1 {
+    pct=$5; gsub(/%/,"",pct)
+    avail=$4; mount=$NF
+    bar=""
+    for(i=0;i<int(pct/10);i++) bar=bar"#"
+    for(i=int(pct/10);i<10;i++) bar=bar"-"
+    printf "%s\n  [%s] %s%% used (%s free)\n\n", mount, bar, pct, avail
+  }'
 timeout: 10s
+category: system
+icon: "💾"

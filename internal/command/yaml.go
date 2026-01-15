@@ -22,6 +22,8 @@ type YAMLCommandDef struct {
 	Timeout     time.Duration `yaml:"timeout"`
 	MaxOutput   int           `yaml:"max_output"`
 	Confirm     bool          `yaml:"confirm"`
+	Category    string        `yaml:"category"`
+	Icon        string        `yaml:"icon"`
 }
 
 // YAMLCommand is a Command implementation backed by a shell command.
@@ -56,6 +58,14 @@ func (y *YAMLCommand) Metadata() pkgcmd.Metadata {
 		Timeout:        y.def.Timeout,
 		MaxOutput:      y.def.MaxOutput,
 		RequireConfirm: y.def.Confirm,
+	}
+}
+
+// Category returns the command's category for menu grouping.
+func (y *YAMLCommand) Category() pkgcmd.CategoryInfo {
+	return pkgcmd.CategoryInfo{
+		Name: y.def.Category,
+		Icon: y.def.Icon,
 	}
 }
 

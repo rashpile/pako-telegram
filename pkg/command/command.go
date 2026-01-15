@@ -43,3 +43,29 @@ type WithMetadata interface {
 	Command
 	Metadata() Metadata
 }
+
+// CategoryInfo holds category metadata for menu organization.
+type CategoryInfo struct {
+	Name string // Category name (e.g., "system", "deploy")
+	Icon string // Emoji icon (e.g., "📊", "🚀")
+}
+
+// WithCategory extends Command with category information for menu grouping.
+type WithCategory interface {
+	Command
+	Category() CategoryInfo
+}
+
+// FileResponse indicates a command wants to send a file after execution.
+type FileResponse struct {
+	Path    string // Path to the file to send
+	Caption string // Optional caption for the file
+	Cleanup bool   // If true, delete file after sending
+}
+
+// WithFileResponse extends Command for commands that return files.
+// After Execute() completes, the bot checks FileResponse() and sends the file.
+type WithFileResponse interface {
+	Command
+	FileResponse() *FileResponse
+}

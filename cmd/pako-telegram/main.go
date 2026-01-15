@@ -84,12 +84,24 @@ func run(configPath string) error {
 	registry.Register(builtin.NewStatusCommand(status.NewGopsutilCollector()))
 	registry.Register(builtin.NewReloadCommand(loader, registry))
 
+	// Register podcast command if configured
+	if cfg.Podcast.PodcastgenPath != "" {
+		podcastCfg := builtin.PodcastConfig{
+			PodcastgenPath: cfg.ExpandPath(configPath, cfg.Podcast.PodcastgenPath),
+			ConfigPath:     cfg.ExpandPath(configPath, cfg.Podcast.ConfigPath),
+			TempDir:        cfg.Podcast.TempDir,
+		}
+		registry.Register(builtin.NewPodcastCommand(podcastCfg))
+		slog.Info("podcast command enabled", "path", podcastCfg.PodcastgenPath)
+	}
+
 	// Create bot with dependencies
 	b, err := bot.New(bot.Config{
-		Token:      cfg.Telegram.Token,
-		Authorizer: authorizer,
-		Registry:   registry,
-		Defaults:   cfg.Defaults,
+		Token:          cfg.Telegram.Token,
+		Authorizer:     authorizer,
+		Registry:       registry,
+		Defaults:       cfg.Defaults,
+		AllowedChatIDs: cfg.Telegram.AllowedChatIDs,
 	})
 	if err != nil {
 		return err
@@ -108,6 +120,9 @@ func run(configPath string) error {
 		slog.Info("received signal, shutting down", "signal", sig)
 		cancel()
 	}()
+
+	// Notify users that bot has restarted
+	b.NotifyStartup()
 
 	slog.Info("starting bot")
 	return b.Run(ctx)

@@ -1,4 +1,10 @@
 name: uptime
-description: "Show system uptime"
-command: "uptime"
+description: "System uptime and load"
+command: |
+  echo "=== System Uptime ==="
+  uptime | sed 's/.*up /Uptime: /' | sed 's/, [0-9]* user.*//'
+  echo ""
+  uptime | grep -o 'load average.*' | sed 's/load averages*: /Load:   /'
 timeout: 10s
+category: system
+icon: "⏱️"
