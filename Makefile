@@ -1,8 +1,11 @@
-.PHONY: build test lint run clean deps fmt vet
+.PHONY: build test lint run clean deps fmt vet install restart
 
 # Binary name
 BINARY_NAME=pako-telegram
 BUILD_DIR=bin
+CONFIG_DIR=$(HOME)/.config/pako-telegram
+INSTALL_DIR=/usr/local/bin
+SERVICE_NAME=com.pako-telegram
 
 # Go parameters
 GOCMD=go
@@ -75,3 +78,23 @@ docker-run:
 
 # All checks before commit
 check: fmt vet lint test
+
+# Install binary and commands locally, restart service
+install: build
+	@echo "Installing binary to $(INSTALL_DIR)..."
+	sudo cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
+	@echo "Copying commands to $(CONFIG_DIR)/commands..."
+	@mkdir -p $(CONFIG_DIR)/commands
+	cp $(BUILD_DIR)/commands/*.yaml $(CONFIG_DIR)/commands/
+	@echo "Restarting service..."
+	@launchctl stop $(SERVICE_NAME) 2>/dev/null || true
+	@launchctl start $(SERVICE_NAME)
+	@echo "Done! Checking logs..."
+	@sleep 1
+	@tail -5 $(CONFIG_DIR)/stdout.log
+
+# Restart the service without rebuilding
+restart:
+	@launchctl stop $(SERVICE_NAME) 2>/dev/null || true
+	@launchctl start $(SERVICE_NAME)
+	@echo "Service restarted"
