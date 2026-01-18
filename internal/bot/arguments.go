@@ -203,7 +203,7 @@ func (c *ArgumentCollector) GetLastPromptMsgID(chatID int64) int {
 func validateArgument(arg *command.ArgumentDef, input string) error {
 	// Check required
 	if arg.Required && strings.TrimSpace(input) == "" {
-		return fmt.Errorf("This field is required")
+		return fmt.Errorf("this field is required")
 	}
 
 	// Allow empty for optional
@@ -214,7 +214,7 @@ func validateArgument(arg *command.ArgumentDef, input string) error {
 	switch arg.Type {
 	case "int":
 		if _, err := strconv.Atoi(input); err != nil {
-			return fmt.Errorf("Please enter a valid integer")
+			return fmt.Errorf("please enter a valid integer")
 		}
 
 	case "bool":
@@ -225,12 +225,12 @@ func validateArgument(arg *command.ArgumentDef, input string) error {
 			"1": true, "0": true,
 		}
 		if !valid[lower] {
-			return fmt.Errorf("Please enter yes/no, true/false, or 1/0")
+			return fmt.Errorf("please enter yes/no, true/false, or 1/0")
 		}
 
 	case "choice":
 		if len(arg.Choices) > 0 && !slices.Contains(arg.Choices, input) {
-			return fmt.Errorf("Please select one of: %s", strings.Join(arg.Choices, ", "))
+			return fmt.Errorf("please select one of: %s", strings.Join(arg.Choices, ", "))
 		}
 
 	case "string", "":
