@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v0.0.0-manual'
 
 permissions:
   contents: write
@@ -37,7 +43,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          VERSION=${GITHUB_REF_NAME}
+          VERSION=${{ inputs.version || github.ref_name }}
           COMMIT=${GITHUB_SHA::8}
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           LDFLAGS="-s -w -X github.com/rashpile/pako-telegram/internal/version.Version=${VERSION} -X github.com/rashpile/pako-telegram/internal/version.Commit=${COMMIT} -X github.com/rashpile/pako-telegram/internal/version.BuildDate=${BUILD_DATE}"
@@ -70,6 +76,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.version || github.ref_name }}
           files: |
             artifacts/pako-telegram-*
             artifacts/checksums.txt
