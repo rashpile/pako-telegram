@@ -21,7 +21,7 @@ command: |
   echo "Downloading ${BINARY}-${OS}-${ARCH}..."
 
   TEMP_FILE=$(mktemp)
-  curl -L -o ${TEMP_FILE} "https://github.com/${REPO}/releases/download/${VERSION}/${BINARY}-${OS}-${ARCH}"
+  curl -L --progress-bar -o ${TEMP_FILE} "https://github.com/${REPO}/releases/download/${VERSION}/${BINARY}-${OS}-${ARCH}" 2>&1
   chmod +x ${TEMP_FILE}
 
   echo "Installing to ${INSTALL_DIR}/${BINARY}..."
@@ -29,19 +29,10 @@ command: |
   mv ${TEMP_FILE} ${INSTALL_DIR}/${BINARY}
 
   echo "Updated to $VERSION"
-
-  # Restart service if available (backgrounded to allow current process to exit)
-  SERVICE_NAME="com.pako-telegram"
-  if command -v launchctl &> /dev/null; then
-    echo "Restarting launchd service in 2 seconds..."
-    (sleep 2 && launchctl stop ${SERVICE_NAME} && sleep 1 && launchctl start ${SERVICE_NAME}) &
-  elif command -v systemctl &> /dev/null; then
-    echo "Restarting systemd service in 2 seconds..."
-    (sleep 2 && sudo systemctl restart ${BINARY}) &
-  else
-    echo "No service manager found, please restart manually"
-  fi
+  echo ""
+  echo "Run /restart to apply the update."
 timeout: 120s
+max_output: 50000
 confirm: true
 category: system
 icon: "🔄"

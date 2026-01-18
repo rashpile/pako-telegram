@@ -1,0 +1,21 @@
+name: restart
+description: "Restart the bot service"
+command: |
+  SERVICE_NAME="com.pako-telegram"
+
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "Restarting via launchctl..."
+    launchctl kickstart -k gui/$(id -u)/${SERVICE_NAME}
+  elif command -v systemctl &> /dev/null; then
+    echo "Restarting via systemctl..."
+    systemctl --user restart pako-telegram
+  else
+    echo "No service manager found"
+    exit 1
+  fi
+
+  echo "Service restart initiated"
+timeout: 30s
+confirm: true
+category: system
+icon: "🔄"
