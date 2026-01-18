@@ -83,6 +83,7 @@ func run(configPath string) error {
 	registry.Register(builtin.NewHelpCommand(registry))
 	registry.Register(builtin.NewStatusCommand(status.NewGopsutilCollector()))
 	registry.Register(builtin.NewReloadCommand(loader, registry))
+	registry.Register(builtin.NewVersionCommand())
 
 	// Register podcast command if configured
 	if cfg.Podcast.PodcastgenPath != "" {

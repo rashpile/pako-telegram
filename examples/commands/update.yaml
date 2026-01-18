@@ -1,0 +1,47 @@
+name: update
+description: "Update bot to latest GitHub release"
+command: |
+  set -e
+  REPO="rashpile/pako-telegram"
+  BINARY="pako-telegram"
+  INSTALL_DIR="$HOME/.config/pako-telegram/bin"
+
+  OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+
+  echo "Fetching latest release..."
+  VERSION=$(curl -s https://api.github.com/repos/${REPO}/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+
+  if [ -z "$VERSION" ]; then
+    echo "Error: Could not fetch latest version"
+    exit 1
+  fi
+
+  echo "Latest version: $VERSION"
+  echo "Downloading ${BINARY}-${OS}-${ARCH}..."
+
+  TEMP_FILE=$(mktemp)
+  curl -L -o ${TEMP_FILE} "https://github.com/${REPO}/releases/download/${VERSION}/${BINARY}-${OS}-${ARCH}"
+  chmod +x ${TEMP_FILE}
+
+  echo "Installing to ${INSTALL_DIR}/${BINARY}..."
+  mkdir -p ${INSTALL_DIR}
+  mv ${TEMP_FILE} ${INSTALL_DIR}/${BINARY}
+
+  echo "Updated to $VERSION"
+
+  # Restart service if available (backgrounded to allow current process to exit)
+  SERVICE_NAME="com.pako-telegram"
+  if command -v launchctl &> /dev/null; then
+    echo "Restarting launchd service in 2 seconds..."
+    (sleep 2 && launchctl stop ${SERVICE_NAME} && sleep 1 && launchctl start ${SERVICE_NAME}) &
+  elif command -v systemctl &> /dev/null; then
+    echo "Restarting systemd service in 2 seconds..."
+    (sleep 2 && sudo systemctl restart ${BINARY}) &
+  else
+    echo "No service manager found, please restart manually"
+  fi
+timeout: 120s
+confirm: true
+category: system
+icon: "🔄"
