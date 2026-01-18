@@ -9,13 +9,13 @@
     <array>
         <string>/usr/local/bin/pako-telegram</string>
         <string>-config</string>
-        <string>~/.config/pako-telegram/config.yaml</string>
+    <string>/Users/pkoptilin/.config/pako-telegram/config.yaml</string>
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>BOT_TOKEN</key>
-        <string></string>
+        <string>${BOT_TOKEN}</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -28,9 +28,9 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>~/.local/state/pako-telegram/stdout.log</string>
+    <string>~/.config/pako-telegram/stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>~/.local/state/pako-telegram/stderr.log</string>
+    <string>~/.config/pako-telegram/stderr.log</string>
 </dict>
 </plist>

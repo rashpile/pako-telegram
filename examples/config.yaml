@@ -12,3 +12,10 @@ database:
 defaults:
   timeout: 60s
   max_output: 5000
+
+# Podcast generation (optional)
+# Uncomment and configure to enable /podcast command
+# podcast:
+#   podcastgen_path: "/path/to/pako-channels/experimental/podcastgen"
+#   config_path: "/path/to/pako-channels/experimental/podcastgen/config.yml"
+#   temp_dir: "/tmp/pako-telegram"

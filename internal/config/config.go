@@ -19,6 +19,7 @@ type Config struct {
 	PluginsDir  string         `yaml:"plugins_dir"`
 	Database    DatabaseConfig `yaml:"database"`
 	Defaults    DefaultsConfig `yaml:"defaults"`
+	Podcast     PodcastConfig  `yaml:"podcast"`
 }
 
 // TelegramConfig holds Telegram bot settings.
@@ -36,6 +37,13 @@ type DatabaseConfig struct {
 type DefaultsConfig struct {
 	Timeout   time.Duration `yaml:"timeout"`
 	MaxOutput int           `yaml:"max_output"`
+}
+
+// PodcastConfig holds configuration for podcast generation.
+type PodcastConfig struct {
+	PodcastgenPath string `yaml:"podcastgen_path"` // Path to podcastgen directory
+	ConfigPath     string `yaml:"config_path"`     // Path to TTS config.yml
+	TempDir        string `yaml:"temp_dir"`        // Temp directory for files
 }
 
 // Load reads configuration from the specified YAML file path.
