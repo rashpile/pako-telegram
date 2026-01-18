@@ -153,3 +153,247 @@ type Command interface {
 8. Commands respect configured timeout (process killed on expiry)
 9. Go plugins loaded at startup and callable via Telegram
 10. Daemon runs stable under systemd/launchd with proper signal handling
+
+---
+
+# Feature: Interactive Command Arguments
+
+## Project Definition
+
+Add interactive command arguments to the Telegram bot. When a user invokes a command that has defined arguments, the bot prompts for each argument sequentially, validates input, and executes the shell command with collected values substituted via Go templates.
+
+## Requirements
+
+### Functional
+
+- **Argument Definition in YAML**: Extend `YAMLCommandDef` struct to support an `arguments` array
+- **Argument Fields**: Each argument has `name`, `description`, `required`, `type`, `choices`, `default`, `sensitive`
+- **Argument Types**: Support `string`, `int`, `bool`, `choice`
+- **Sequential Prompting**: After command invocation, bot prompts for each argument one at a time
+- **Template Substitution**: Use Go template syntax `{{.argName}}` in command field
+- **Choice Presentation**: Display inline keyboard buttons if choices ≤4, otherwise text list
+- **Validation**: Validate input against type and choices; re-prompt with error message on invalid input
+- **Default Values**: Skip prompting if argument has default and is not required
+- **Cancellation**: Support `/cancel` command to abort argument collection mid-flow
+- **Timeout**: Abort argument collection after configurable timeout (default 120s)
+- **Sensitive Arguments**: When `sensitive: true`, delete user's message after capturing the value
+- **Multi-line Input**: Support multi-line text input for string arguments
+
+### Non-Functional
+
+- **State Storage**: In-memory map for pending argument sessions (acceptable to lose state on restart)
+- **Concurrency Safety**: Guard state map with mutex for concurrent access
+- **Context Propagation**: Pass context through argument collection for proper cancellation
+- **Minimal Footprint**: No external dependencies for state storage
+
+## Technical Specification
+
+### Architecture
+
+Extend existing command execution flow:
+
+```
+User sends /cmd
+    │
+    ▼
+Registry.Get(cmd) → YAMLCommand
+    │
+    ▼
+Has arguments? ─── No ──→ Execute immediately
+    │
+   Yes
+    │
+    ▼
+ArgumentCollector.Start(chatID, cmd)
+    │
+    ▼
+Prompt for arg[0]
+    │
+    ▼
+User responds ──→ Validate ──→ Invalid? Re-prompt
+    │                              │
+   Valid                          │
+    │◄─────────────────────────────┘
+    ▼
+More args? ─── Yes ──→ Prompt for arg[N]
+    │
+   No
+    │
+    ▼
+Render command template with collected args
+    │
+    ▼
+Execute shell command
+```
+
+### Data Model
+
+**Extended YAMLCommandDef:**
+
+```go
+type YAMLCommandDef struct {
+    Name            string         `yaml:"name"`
+    Description     string         `yaml:"description"`
+    Command         string         `yaml:"command"`
+    Timeout         time.Duration  `yaml:"timeout"`
+    MaxOutput       int            `yaml:"max_output"`
+    Confirm         bool           `yaml:"confirm"`
+    Category        string         `yaml:"category"`
+    Icon            string         `yaml:"icon"`
+    Arguments       []ArgumentDef  `yaml:"arguments"`
+    ArgumentTimeout time.Duration  `yaml:"argument_timeout"`
+}
+
+type ArgumentDef struct {
+    Name        string   `yaml:"name"`
+    Description string   `yaml:"description"`
+    Required    bool     `yaml:"required"`
+    Type        string   `yaml:"type"`    // string, int, bool, choice
+    Choices     []string `yaml:"choices"` // for choice type
+    Default     string   `yaml:"default"`
+    Sensitive   bool     `yaml:"sensitive"`
+}
+```
+
+**Argument Session State:**
+
+```go
+type ArgumentSession struct {
+    ChatID      int64
+    Command     *YAMLCommand
+    Arguments   []ArgumentDef
+    Collected   map[string]string
+    CurrentIdx  int
+    StartedAt   time.Time
+    TimeoutDur  time.Duration
+}
+
+type ArgumentCollector struct {
+    mu             sync.RWMutex
+    sessions       map[int64]*ArgumentSession // keyed by chat ID
+    defaultTimeout time.Duration
+}
+```
+
+### Key Components
+
+1. **ArgumentDef**: Struct for argument definition in YAML
+2. **ArgumentSession**: Tracks in-progress argument collection per chat
+3. **ArgumentCollector**: Manages sessions, prompting, validation, timeout
+4. **TemplateRenderer**: Renders command string with collected arguments
+
+### Validation Logic
+
+| Type | Validation |
+|------|------------|
+| `string` | Non-empty if required |
+| `int` | Parseable as integer |
+| `bool` | `true`, `false`, `yes`, `no`, `1`, `0` |
+| `choice` | Value exists in choices array |
+
+### Message Flow
+
+**Prompt Message Format:**
+```
+{argument.description}
+```
+
+**Validation Error Format:**
+```
+Invalid input: {error reason}
+{argument.description}
+```
+
+**Choice Presentation (≤4 choices):**
+- Inline keyboard with one button per choice
+
+**Choice Presentation (>4 choices):**
+```
+{argument.description}
+
+Options:
+1. choice1
+2. choice2
+3. choice3
+...
+```
+
+## UI/UX
+
+- Bot prompts appear as regular messages
+- Inline keyboard buttons for choices (≤4 options)
+- Sensitive input messages deleted immediately after capture
+- `/cancel` available at any prompt to abort
+- Timeout message: "Argument collection timed out. Please try again."
+
+## Constraints
+
+- Single active argument session per chat (new command cancels pending session)
+- State lost on bot restart (acceptable per requirements)
+- Go template syntax required in YAML command field
+- Maximum argument count not enforced (YAML author responsibility)
+
+## Acceptance Criteria
+
+1. **YAML Parsing**: Bot loads commands with `arguments` field without error
+2. **Sequential Prompting**: `/chat` with 2 arguments prompts for each in order
+3. **Validation**: Invalid int input re-prompts with error message
+4. **Choice Buttons**: Command with ≤4 choices shows inline keyboard
+5. **Choice Text**: Command with >4 choices shows numbered text list
+6. **Template Rendering**: `{{.argName}}` replaced with collected value in shell command
+7. **Cancellation**: `/cancel` during prompting aborts and confirms to user
+8. **Timeout**: No response for 120s (default) aborts with timeout message
+9. **Sensitive**: Message with sensitive input deleted after capture
+10. **Multi-line**: String argument accepts input with newlines
+11. **Default Values**: Argument with default skips prompting (unless required without value)
+12. **Existing Commands**: Commands without `arguments` field execute immediately as before
+
+## Example YAML
+
+```yaml
+name: chat
+description: "Chat with AI"
+arguments:
+  - name: prompt
+    description: "Enter your prompt"
+    required: true
+    type: string
+  - name: model
+    description: "Select model"
+    type: choice
+    choices: ["gpt-4", "gpt-3.5", "claude"]
+    default: "gpt-4"
+argument_timeout: 60s
+command: |
+  curl -X POST https://api.example.com/chat \
+    -d '{"prompt": "{{.prompt}}", "model": "{{.model}}"}'
+timeout: 30s
+category: ai
+icon: "🤖"
+```
+
+```yaml
+name: deploy
+description: "Deploy application"
+arguments:
+  - name: env
+    description: "Select environment"
+    required: true
+    type: choice
+    choices: ["staging", "prod"]
+  - name: version
+    description: "Enter version (e.g., 1.2.3)"
+    required: true
+    type: string
+  - name: force
+    description: "Force deployment? (yes/no)"
+    type: bool
+    default: "false"
+argument_timeout: 120s
+command: |
+  ./deploy.sh --env={{.env}} --version={{.version}} --force={{.force}}
+timeout: 300s
+confirm: true
+category: deploy
+icon: "🚀"
+```

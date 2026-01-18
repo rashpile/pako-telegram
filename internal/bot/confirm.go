@@ -23,11 +23,12 @@ const (
 
 // PendingConfirmation tracks a command awaiting user confirmation.
 type PendingConfirmation struct {
-	ChatID    int64
-	MessageID int
-	Command   string
-	Args      []string
-	ExpiresAt time.Time
+	ChatID          int64
+	MessageID       int
+	Command         string
+	Args            []string
+	RenderedCommand string // Pre-rendered command for argument-based execution
+	ExpiresAt       time.Time
 }
 
 // ConfirmationManager handles confirmation dialogs.
@@ -87,6 +88,48 @@ func (cm *ConfirmationManager) RequestConfirmation(
 		Command:   cmdName,
 		Args:      args,
 		ExpiresAt: time.Now().Add(confirmationTTL),
+	}
+	cm.mu.Unlock()
+
+	return nil
+}
+
+// RequestConfirmationWithRendered sends a confirmation dialog for a pre-rendered command.
+func (cm *ConfirmationManager) RequestConfirmationWithRendered(
+	api *tgbotapi.BotAPI,
+	chatID int64,
+	cmdName string,
+	rendered string,
+) error {
+	id := generateID()
+
+	// Create inline keyboard
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Confirm", callbackConfirm+id),
+			tgbotapi.NewInlineKeyboardButtonData("Cancel", callbackCancel+id),
+		),
+	)
+
+	text := fmt.Sprintf("Confirm execution of `/%s`?", cmdName)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = keyboard
+
+	sent, err := api.Send(msg)
+	if err != nil {
+		return err
+	}
+
+	// Store pending confirmation with rendered command
+	cm.mu.Lock()
+	cm.pending[id] = &PendingConfirmation{
+		ChatID:          chatID,
+		MessageID:       sent.MessageID,
+		Command:         cmdName,
+		RenderedCommand: rendered,
+		ExpiresAt:       time.Now().Add(confirmationTTL),
 	}
 	cm.mu.Unlock()
 

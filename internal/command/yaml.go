@@ -14,16 +14,29 @@ import (
 	pkgcmd "github.com/rashpile/pako-telegram/pkg/command"
 )
 
+// ArgumentDef represents a command argument definition.
+type ArgumentDef struct {
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Required    bool     `yaml:"required"`
+	Type        string   `yaml:"type"` // string, int, bool, choice
+	Choices     []string `yaml:"choices"`
+	Default     string   `yaml:"default"`
+	Sensitive   bool     `yaml:"sensitive"`
+}
+
 // YAMLCommandDef represents a shell command definition from YAML.
 type YAMLCommandDef struct {
-	Name        string        `yaml:"name"`
-	Description string        `yaml:"description"`
-	Command     string        `yaml:"command"`
-	Timeout     time.Duration `yaml:"timeout"`
-	MaxOutput   int           `yaml:"max_output"`
-	Confirm     bool          `yaml:"confirm"`
-	Category    string        `yaml:"category"`
-	Icon        string        `yaml:"icon"`
+	Name            string        `yaml:"name"`
+	Description     string        `yaml:"description"`
+	Command         string        `yaml:"command"`
+	Timeout         time.Duration `yaml:"timeout"`
+	MaxOutput       int           `yaml:"max_output"`
+	Confirm         bool          `yaml:"confirm"`
+	Category        string        `yaml:"category"`
+	Icon            string        `yaml:"icon"`
+	Arguments       []ArgumentDef `yaml:"arguments"`
+	ArgumentTimeout time.Duration `yaml:"argument_timeout"`
 }
 
 // YAMLCommand is a Command implementation backed by a shell command.
@@ -67,6 +80,37 @@ func (y *YAMLCommand) Category() pkgcmd.CategoryInfo {
 		Name: y.def.Category,
 		Icon: y.def.Icon,
 	}
+}
+
+// Arguments returns the command's argument definitions.
+func (y *YAMLCommand) Arguments() []ArgumentDef {
+	return y.def.Arguments
+}
+
+// ArgumentTimeout returns the timeout for argument collection.
+func (y *YAMLCommand) ArgumentTimeout() time.Duration {
+	return y.def.ArgumentTimeout
+}
+
+// HasArguments returns true if the command has defined arguments.
+func (y *YAMLCommand) HasArguments() bool {
+	return len(y.def.Arguments) > 0
+}
+
+// CommandTemplate returns the raw command template string.
+func (y *YAMLCommand) CommandTemplate() string {
+	return y.def.Command
+}
+
+// ExecuteRendered runs a pre-rendered command string.
+func (y *YAMLCommand) ExecuteRendered(ctx context.Context, rendered string, output io.Writer) error {
+	return y.executor.Execute(ctx, rendered, nil, output)
+}
+
+// FileResponse returns nil for basic YAML commands.
+// Commands that support file responses should embed this type.
+func (y *YAMLCommand) FileResponse() *pkgcmd.FileResponse {
+	return nil
 }
 
 // Loader loads YAML command definitions from a directory.

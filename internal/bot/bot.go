@@ -33,6 +33,7 @@ type Bot struct {
 	defaults       config.DefaultsConfig
 	confirmMgr     *ConfirmationManager
 	menuBuilder    *MenuBuilder
+	argCollector   *ArgumentCollector
 	allowedChatIDs []int64
 }
 
@@ -57,6 +58,7 @@ func New(cfg Config) (*Bot, error) {
 		defaults:       cfg.Defaults,
 		confirmMgr:     NewConfirmationManager(),
 		menuBuilder:    NewMenuBuilder(registry),
+		argCollector:   NewArgumentCollector(),
 		allowedChatIDs: cfg.AllowedChatIDs,
 	}, nil
 }
@@ -89,21 +91,37 @@ func (b *Bot) Run(ctx context.Context) error {
 			return nil
 
 		case update := <-updates:
-			// Handle callback queries (menu navigation and confirmation buttons)
+			// Handle callback queries (menu navigation, confirmation buttons, argument selection)
 			if update.CallbackQuery != nil {
 				go b.handleCallback(ctx, update.CallbackQuery)
 				continue
 			}
 
-			// Handle command messages
-			if update.Message != nil && update.Message.IsCommand() {
-				cmdName := update.Message.Command()
-				// Handle /start and /menu specially to show interactive menu
-				if cmdName == "start" || cmdName == "menu" {
-					go b.handleMenuCommand(update.Message)
+			// Handle messages
+			if update.Message != nil {
+				chatID := update.Message.Chat.ID
+
+				// Handle command messages
+				if update.Message.IsCommand() {
+					cmdName := update.Message.Command()
+					// Handle /cancel to abort argument collection
+					if cmdName == "cancel" {
+						go b.handleCancelCommand(update.Message)
+						continue
+					}
+					// Handle /start and /menu specially to show interactive menu
+					if cmdName == "start" || cmdName == "menu" {
+						go b.handleMenuCommand(update.Message)
+						continue
+					}
+					go b.handleCommand(ctx, update.Message)
 					continue
 				}
-				go b.handleCommand(ctx, update.Message)
+
+				// Handle non-command text messages for argument collection
+				if b.argCollector.HasSession(chatID) {
+					go b.handleArgumentInput(ctx, update.Message)
+				}
 			}
 		}
 	}
@@ -138,6 +156,12 @@ func (b *Bot) handleCallback(ctx context.Context, query *tgbotapi.CallbackQuery)
 	callback := tgbotapi.NewCallback(query.ID, "")
 	b.api.Request(callback)
 
+	// Check if this is an argument selection callback
+	if IsArgumentCallback(query.Data) {
+		b.handleArgumentCallback(ctx, query)
+		return
+	}
+
 	// Check if this is a menu callback
 	if IsMenuCallback(query.Data) {
 		b.handleMenuCallback(ctx, query)
@@ -164,7 +188,14 @@ func (b *Bot) handleCallback(ctx context.Context, query *tgbotapi.CallbackQuery)
 	if confirmed && pending != nil {
 		cmd := b.registry.Get(pending.Command)
 		if cmd != nil {
-			b.executeCommand(ctx, chatID, cmd, pending.Args)
+			// Check if this is a rendered command (from argument collection)
+			if pending.RenderedCommand != "" {
+				if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+					b.executeRenderedCommand(ctx, chatID, yamlCmd, pending.RenderedCommand)
+				}
+			} else {
+				b.executeCommand(ctx, chatID, cmd, pending.Args)
+			}
 			b.sendMenu(chatID)
 		}
 	}
@@ -202,6 +233,23 @@ func (b *Bot) handleMenuCallback(ctx context.Context, query *tgbotapi.CallbackQu
 		cmd := b.registry.Get(value)
 		if cmd == nil {
 			logger.Warn("command not found from menu", "command", value)
+			return
+		}
+
+		// Check if command is a YAMLCommand with arguments
+		if yamlCmd, ok := cmd.(*command.YAMLCommand); ok && yamlCmd.HasArguments() {
+			// Delete the menu message and start argument collection
+			deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+			b.api.Request(deleteMsg)
+
+			logger.Info("starting argument collection from menu", "command", value)
+			session := b.argCollector.StartSession(chatID, yamlCmd)
+			if session != nil && !session.IsComplete() {
+				b.promptNextArgument(chatID, session)
+				return
+			}
+			// All arguments have defaults, proceed with execution
+			b.executeWithArguments(ctx, chatID)
 			return
 		}
 
@@ -261,6 +309,19 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 	if cmd == nil {
 		logger.Debug("unknown command")
 		b.sendText(chatID, fmt.Sprintf("Unknown command: /%s\nUse /help to see available commands.", cmdName))
+		return
+	}
+
+	// Check if command is a YAMLCommand with arguments that need collection
+	if yamlCmd, ok := cmd.(*command.YAMLCommand); ok && yamlCmd.HasArguments() {
+		logger.Info("starting argument collection")
+		session := b.argCollector.StartSession(chatID, yamlCmd)
+		if session != nil && !session.IsComplete() {
+			b.promptNextArgument(chatID, session)
+			return
+		}
+		// All arguments have defaults, proceed with execution
+		b.executeWithArguments(ctx, chatID)
 		return
 	}
 
@@ -407,4 +468,215 @@ func extractRawText(fullText, cmdName string) string {
 	}
 
 	return rest
+}
+
+// handleCancelCommand handles the /cancel command to abort argument collection.
+func (b *Bot) handleCancelCommand(msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+
+	if !b.authorizer.IsAllowed(chatID) {
+		return
+	}
+
+	if b.argCollector.HasSession(chatID) {
+		b.argCollector.CancelSession(chatID)
+		b.sendText(chatID, "Command cancelled.")
+	} else {
+		b.sendText(chatID, "No active command to cancel.")
+	}
+}
+
+// handleArgumentInput processes text input for argument collection.
+func (b *Bot) handleArgumentInput(ctx context.Context, msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+	logger := slog.With("chat_id", chatID)
+
+	session := b.argCollector.GetSession(chatID)
+	if session == nil {
+		return
+	}
+
+	// Check if session expired
+	if session.IsExpired() {
+		b.argCollector.CancelSession(chatID)
+		b.sendText(chatID, "Argument collection timed out. Please try again.")
+		return
+	}
+
+	// Get current argument for sensitive check before processing
+	currentArg := session.CurrentArg()
+
+	// Process the input
+	errMsg := b.argCollector.ProcessInput(chatID, msg.Text)
+	if errMsg != "" {
+		// Validation failed, re-prompt
+		b.sendText(chatID, fmt.Sprintf("Invalid input: %s\n\n%s", errMsg, currentArg.Description))
+		return
+	}
+
+	// Delete sensitive message after capturing
+	if currentArg != nil && currentArg.Sensitive {
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, msg.MessageID)
+		b.api.Request(deleteMsg)
+	}
+
+	// Check if all arguments collected
+	session = b.argCollector.GetSession(chatID)
+	if session == nil || session.IsComplete() {
+		b.executeWithArguments(ctx, chatID)
+		return
+	}
+
+	// Prompt for next argument
+	b.promptNextArgument(chatID, session)
+	logger.Debug("prompted for next argument")
+}
+
+// handleArgumentCallback processes inline keyboard selection for arguments.
+func (b *Bot) handleArgumentCallback(ctx context.Context, query *tgbotapi.CallbackQuery) {
+	chatID := query.Message.Chat.ID
+	messageID := query.Message.MessageID
+
+	session := b.argCollector.GetSession(chatID)
+	if session == nil {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, "Session expired. Please start over.")
+		b.api.Send(edit)
+		return
+	}
+
+	// Extract selected value
+	value := ParseArgumentCallback(query.Data)
+
+	// Process the input
+	errMsg := b.argCollector.ProcessInput(chatID, value)
+	if errMsg != "" {
+		// Shouldn't happen with button selection, but handle it
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, fmt.Sprintf("Invalid selection: %s", errMsg))
+		b.api.Send(edit)
+		return
+	}
+
+	// Update the message to show selection
+	currentArg := session.CurrentArg()
+	argName := "argument"
+	if currentArg != nil {
+		argName = currentArg.Name
+	}
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, fmt.Sprintf("Selected %s: %s", argName, value))
+	b.api.Send(edit)
+
+	// Check if all arguments collected
+	session = b.argCollector.GetSession(chatID)
+	if session == nil || session.IsComplete() {
+		b.executeWithArguments(ctx, chatID)
+		return
+	}
+
+	// Prompt for next argument
+	b.promptNextArgument(chatID, session)
+}
+
+// promptNextArgument sends the prompt for the current argument.
+func (b *Bot) promptNextArgument(chatID int64, session *ArgumentSession) {
+	arg := session.CurrentArg()
+	if arg == nil {
+		return
+	}
+
+	// Build prompt text and keyboard
+	var text string
+	var keyboard *tgbotapi.InlineKeyboardMarkup
+
+	if arg.Type == "choice" && len(arg.Choices) > 0 {
+		if len(arg.Choices) <= maxInlineChoices {
+			text = BuildArgumentPrompt(arg)
+			keyboard = BuildChoiceKeyboard(arg)
+		} else {
+			text = BuildChoiceTextList(arg)
+		}
+	} else {
+		text = BuildArgumentPrompt(arg)
+	}
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	if keyboard != nil {
+		msg.ReplyMarkup = keyboard
+	}
+
+	if sent, err := b.api.Send(msg); err == nil {
+		b.argCollector.SetLastPromptMsgID(chatID, sent.MessageID)
+	}
+}
+
+// executeWithArguments executes a command with collected arguments.
+func (b *Bot) executeWithArguments(ctx context.Context, chatID int64) {
+	collected, cmd := b.argCollector.CompleteSession(chatID)
+	if cmd == nil {
+		return
+	}
+
+	logger := slog.With("chat_id", chatID, "command", cmd.Name())
+
+	// Render command template with arguments
+	rendered, err := RenderCommand(cmd.CommandTemplate(), collected)
+	if err != nil {
+		logger.Error("failed to render command template", "error", err)
+		b.sendText(chatID, fmt.Sprintf("Failed to process command: %v", err))
+		return
+	}
+
+	logger.Info("executing command with arguments", "args", collected)
+
+	// Check if command requires confirmation
+	if cmd.Metadata().RequireConfirm {
+		// Store rendered command for execution after confirmation
+		if err := b.confirmMgr.RequestConfirmationWithRendered(b.api, chatID, cmd.Name(), rendered); err != nil {
+			logger.Error("failed to request confirmation", "error", err)
+		}
+		return
+	}
+
+	// Execute the rendered command
+	b.executeRenderedCommand(ctx, chatID, cmd, rendered)
+	b.sendMenu(chatID)
+}
+
+// executeRenderedCommand runs a command with a pre-rendered command string.
+func (b *Bot) executeRenderedCommand(ctx context.Context, chatID int64, cmd *command.YAMLCommand, rendered string) {
+	logger := slog.With("chat_id", chatID, "command", cmd.Name())
+
+	// Get timeout from metadata or use default
+	timeout := b.defaults.Timeout
+	meta := cmd.Metadata()
+	if meta.Timeout > 0 {
+		timeout = meta.Timeout
+	}
+
+	// Execute command with streaming output
+	streamer := NewMessageStreamer(b.api, chatID)
+	if err := streamer.Start(ctx); err != nil {
+		logger.Error("failed to start streamer", "error", err)
+		return
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Execute with rendered command
+	execErr := cmd.ExecuteRendered(execCtx, rendered, streamer)
+	if execErr != nil {
+		logger.Error("command execution failed", "error", execErr)
+		fmt.Fprintf(streamer, "\n\nError: %v", execErr)
+	}
+
+	if err := streamer.Flush(); err != nil {
+		logger.Error("failed to flush output", "error", err)
+	}
+
+	// Handle file response if command supports it
+	if execErr == nil {
+		if resp := cmd.FileResponse(); resp != nil && resp.Path != "" {
+			b.sendAudioFile(chatID, resp)
+		}
+	}
 }

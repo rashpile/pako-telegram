@@ -1,0 +1,19 @@
+name: chat
+description: "Example chat command with arguments"
+arguments:
+  - name: prompt
+    description: "Enter your message"
+    required: true
+    type: string
+  - name: model
+    description: "Select model"
+    type: choice
+    choices: ["gpt-4", "gpt-3.5", "claude"]
+    default: "gpt-4"
+command: |
+  echo "Prompt: {{.prompt}}"
+  echo "Model: {{.model}}"
+timeout: 30s
+argument_timeout: 60s
+category: example
+icon: "💬"
