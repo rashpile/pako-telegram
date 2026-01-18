@@ -322,7 +322,7 @@ func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Comma
 	execErr := cmd.Execute(execCtx, args, streamer)
 	if execErr != nil {
 		logger.Error("command execution failed", "error", execErr)
-		streamer.WriteString(fmt.Sprintf("\n\nError: %v", execErr))
+		fmt.Fprintf(streamer, "\n\nError: %v", execErr)
 	}
 
 	if err := streamer.Flush(); err != nil {
