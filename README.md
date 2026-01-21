@@ -11,6 +11,9 @@ Internal Telegram bot for executing ops tasks on your laptop.
 - Chat ID allowlist security
 - Audit logging to SQLite
 - Hot-reload configuration
+- File output format - send files to Telegram from command output
+- Media group support - send multiple files as albums
+- Cleanup functionality - delete previously sent files from chat
 
 ## Prerequisites
 
@@ -44,9 +47,14 @@ commands_dir: "./commands"
 database:
   path: "~/.local/state/pako-telegram/audit.db"
 
+# Optional: Enable cleanup functionality to delete sent files
+# Path is relative to config file location, or use absolute path
+message_store_path: "messages.json"  # Creates alongside config.yaml
+
 defaults:
   timeout: 60s
   max_output: 5000
+  max_files_per_group: 10  # Max files per Telegram media group
 ```
 
 3. Add commands (`~/.config/pako-telegram/commands/uptime.yaml`):
@@ -81,10 +89,53 @@ pako-telegram -config ~/.config/pako-telegram/config.yaml
 name: deploy           # Command name (without /)
 description: "..."     # Shown in /help
 command: "/path/to/script.sh"  # Shell command to execute
+workdir: "/path/to/dir"  # Working directory for command execution
 timeout: 300s          # Max execution time
 max_output: 10000      # Max output characters
 confirm: true          # Require confirmation before running
+category: deploy       # Category for menu grouping
+icon: "🚀"             # Emoji icon for menu
 ```
+
+## File Output Format
+
+Commands can send files to Telegram by outputting special file references:
+
+```bash
+echo "Here's your file:"
+echo "[file:/path/to/document.pdf]"
+```
+
+**Features:**
+- Multiple files are sent as a Telegram media group (album)
+- Text before file references becomes the caption
+- File types are auto-detected (photo, video, audio, document)
+- Relative paths are resolved against `workdir`
+
+**Example command:**
+```yaml
+name: random-image
+description: "Send a random image"
+workdir: "/path/to/images"
+command: |
+  images=(*.jpg *.png)
+  selected="${images[$((RANDOM % ${#images[@]}))]}"
+  echo "Random image:"
+  echo "[file:$selected]"
+category: media
+icon: "🖼️"
+```
+
+## Cleanup
+
+When `message_store_path` is configured, the bot tracks all sent file messages and provides a cleanup menu to delete them:
+
+- **Last hour** - Delete files sent in the last hour
+- **Last 24 hours** - Delete files sent in the last day
+- **Older than 1 day/week/month** - Delete older files
+- **All files** - Delete all tracked files
+
+The cleanup button appears in the main menu when enabled.
 
 ## Deployment
 

@@ -16,6 +16,7 @@ import (
 	"github.com/rashpile/pako-telegram/internal/command/builtin"
 	"github.com/rashpile/pako-telegram/internal/config"
 	"github.com/rashpile/pako-telegram/internal/executor"
+	"github.com/rashpile/pako-telegram/internal/msgstore"
 	"github.com/rashpile/pako-telegram/internal/status"
 )
 
@@ -96,6 +97,17 @@ func run(configPath string) error {
 		slog.Info("podcast command enabled", "path", podcastCfg.PodcastgenPath)
 	}
 
+	// Set up message store for cleanup functionality
+	var msgStore *msgstore.Store
+	if cfg.MessageStorePath != "" {
+		storePath := cfg.ExpandPath(configPath, cfg.MessageStorePath)
+		msgStore, err = msgstore.New(storePath)
+		if err != nil {
+			return err
+		}
+		slog.Info("message store enabled", "path", storePath)
+	}
+
 	// Create bot with dependencies
 	b, err := bot.New(bot.Config{
 		Token:          cfg.Telegram.Token,
@@ -103,6 +115,7 @@ func run(configPath string) error {
 		Registry:       registry,
 		Defaults:       cfg.Defaults,
 		AllowedChatIDs: cfg.Telegram.AllowedChatIDs,
+		MessageStore:   msgStore,
 	})
 	if err != nil {
 		return err

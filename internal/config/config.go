@@ -14,12 +14,13 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Telegram    TelegramConfig `yaml:"telegram"`
-	CommandsDir string         `yaml:"commands_dir"`
-	PluginsDir  string         `yaml:"plugins_dir"`
-	Database    DatabaseConfig `yaml:"database"`
-	Defaults    DefaultsConfig `yaml:"defaults"`
-	Podcast     PodcastConfig  `yaml:"podcast"`
+	Telegram         TelegramConfig `yaml:"telegram"`
+	CommandsDir      string         `yaml:"commands_dir"`
+	PluginsDir       string         `yaml:"plugins_dir"`
+	Database         DatabaseConfig `yaml:"database"`
+	Defaults         DefaultsConfig `yaml:"defaults"`
+	Podcast          PodcastConfig  `yaml:"podcast"`
+	MessageStorePath string         `yaml:"message_store_path"` // Path to store sent message IDs for cleanup
 }
 
 // TelegramConfig holds Telegram bot settings.

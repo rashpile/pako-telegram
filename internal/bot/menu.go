@@ -26,17 +26,24 @@ const (
 	menuPrefix     = "menu:"
 	categoryPrefix = "cat:"
 	commandPrefix  = "cmd:"
+	cleanupPrefix  = "cleanup:"
 	backToMenu     = "menu:main"
 )
 
 // MenuBuilder creates inline keyboards for the interactive menu.
 type MenuBuilder struct {
-	registry *command.Registry
+	registry       *command.Registry
+	cleanupEnabled bool
 }
 
 // NewMenuBuilder creates a menu builder.
 func NewMenuBuilder(registry *command.Registry) *MenuBuilder {
 	return &MenuBuilder{registry: registry}
+}
+
+// SetCleanupEnabled sets whether the cleanup button should be shown.
+func (m *MenuBuilder) SetCleanupEnabled(enabled bool) {
+	m.cleanupEnabled = enabled
 }
 
 // BuildMainMenu creates the main menu keyboard with category buttons.
@@ -67,6 +74,12 @@ func (m *MenuBuilder) BuildMainMenu() (string, tgbotapi.InlineKeyboardMarkup) {
 	// Add remaining button if odd number
 	if len(row) > 0 {
 		rows = append(rows, row)
+	}
+
+	// Add cleanup button if enabled
+	if m.cleanupEnabled {
+		cleanupBtn := tgbotapi.NewInlineKeyboardButtonData("🗑️ Cleanup", commandPrefix+"cleanup")
+		rows = append(rows, []tgbotapi.InlineKeyboardButton{cleanupBtn})
 	}
 
 	text := "Select a category:"
@@ -158,6 +171,9 @@ func ParseCallback(data string) (callbackType, value string) {
 	if strings.HasPrefix(data, commandPrefix) {
 		return "command", strings.TrimPrefix(data, commandPrefix)
 	}
+	if strings.HasPrefix(data, cleanupPrefix) {
+		return "cleanup", strings.TrimPrefix(data, cleanupPrefix)
+	}
 	if data == backToMenu {
 		return "menu", "main"
 	}
@@ -171,5 +187,16 @@ func ParseCallback(data string) (callbackType, value string) {
 func IsMenuCallback(data string) bool {
 	return strings.HasPrefix(data, menuPrefix) ||
 		strings.HasPrefix(data, categoryPrefix) ||
-		strings.HasPrefix(data, commandPrefix)
+		strings.HasPrefix(data, commandPrefix) ||
+		strings.HasPrefix(data, cleanupPrefix)
+}
+
+// IsCleanupCallback checks if the callback is a cleanup-related callback.
+func IsCleanupCallback(data string) bool {
+	return strings.HasPrefix(data, cleanupPrefix)
+}
+
+// CleanupCallbackData creates a cleanup callback data string.
+func CleanupCallbackData(option string) string {
+	return cleanupPrefix + option
 }

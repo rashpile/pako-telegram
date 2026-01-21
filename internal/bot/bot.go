@@ -12,8 +12,10 @@ import (
 
 	"github.com/rashpile/pako-telegram/internal/auth"
 	"github.com/rashpile/pako-telegram/internal/command"
+	"github.com/rashpile/pako-telegram/internal/command/builtin"
 	"github.com/rashpile/pako-telegram/internal/config"
 	"github.com/rashpile/pako-telegram/internal/fileref"
+	"github.com/rashpile/pako-telegram/internal/msgstore"
 	pkgcmd "github.com/rashpile/pako-telegram/pkg/command"
 )
 
@@ -24,6 +26,7 @@ type Config struct {
 	Registry       *command.Registry
 	Defaults       config.DefaultsConfig
 	AllowedChatIDs []int64 // Chat IDs to notify on startup
+	MessageStore   *msgstore.Store
 }
 
 // Bot handles Telegram updates and routes commands to handlers.
@@ -36,6 +39,8 @@ type Bot struct {
 	menuBuilder    *MenuBuilder
 	argCollector   *ArgumentCollector
 	allowedChatIDs []int64
+	msgStore       *msgstore.Store
+	cleanupCmd     *builtin.CleanupCommand
 }
 
 // New creates a Bot with the given dependencies.
@@ -52,16 +57,27 @@ func New(cfg Config) (*Bot, error) {
 		registry = command.NewRegistry()
 	}
 
-	return &Bot{
+	menuBuilder := NewMenuBuilder(registry)
+
+	b := &Bot{
 		api:            api,
 		authorizer:     cfg.Authorizer,
 		registry:       registry,
 		defaults:       cfg.Defaults,
 		confirmMgr:     NewConfirmationManager(),
-		menuBuilder:    NewMenuBuilder(registry),
+		menuBuilder:    menuBuilder,
 		argCollector:   NewArgumentCollector(),
 		allowedChatIDs: cfg.AllowedChatIDs,
-	}, nil
+		msgStore:       cfg.MessageStore,
+	}
+
+	// Create cleanup command if message store is enabled
+	if cfg.MessageStore != nil && cfg.MessageStore.Enabled() {
+		b.cleanupCmd = builtin.NewCleanupCommand(cfg.MessageStore, b)
+		menuBuilder.SetCleanupEnabled(true)
+	}
+
+	return b, nil
 }
 
 // NotifyStartup sends a startup message with menu to all allowed chats.
@@ -229,7 +245,16 @@ func (b *Bot) handleMenuCallback(ctx context.Context, query *tgbotapi.CallbackQu
 			logger.Error("failed to show category", "error", err)
 		}
 
+	case "cleanup":
+		// Handle cleanup option selection
+		b.handleCleanupCallback(chatID, messageID, value, logger)
+
 	case "command":
+		// Check if this is the cleanup command
+		if value == "cleanup" {
+			b.showCleanupMenu(chatID, messageID)
+			return
+		}
 		// Execute the command
 		cmd := b.registry.Get(value)
 		if cmd == nil {
@@ -472,13 +497,32 @@ func (b *Bot) sendMediaGroup(chatID int64, files []fileref.FileRef, caption stri
 	}
 
 	mediaGroup := tgbotapi.NewMediaGroup(chatID, media)
-	if _, err := b.api.SendMediaGroup(mediaGroup); err != nil {
+	msgs, err := b.api.SendMediaGroup(mediaGroup)
+	if err != nil {
 		logger.Error("failed to send media group", "error", err)
 		return err
 	}
 
+	// Track message IDs for cleanup
+	if b.msgStore != nil && b.msgStore.Enabled() {
+		var msgIDs []int
+		for _, m := range msgs {
+			msgIDs = append(msgIDs, m.MessageID)
+		}
+		if err := b.msgStore.AddBatch(chatID, msgIDs); err != nil {
+			logger.Warn("failed to store message IDs", "error", err)
+		}
+	}
+
 	logger.Info("media group sent successfully")
 	return nil
+}
+
+// DeleteMessage deletes a message from a chat. Implements builtin.MessageDeleter.
+func (b *Bot) DeleteMessage(chatID int64, messageID int) error {
+	deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+	_, err := b.api.Request(deleteMsg)
+	return err
 }
 
 // handleFileReferences processes command output for file references and sends them.
@@ -777,4 +821,72 @@ func (b *Bot) executeRenderedCommand(ctx context.Context, chatID int64, cmd *com
 			b.sendAudioFile(chatID, resp)
 		}
 	}
+}
+
+// showCleanupMenu displays the cleanup options menu.
+func (b *Bot) showCleanupMenu(chatID int64, messageID int) {
+	if b.cleanupCmd == nil || !b.cleanupCmd.Enabled() {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, "Cleanup is not enabled. Set message_store_path in config.")
+		b.api.Send(edit)
+		return
+	}
+
+	// Get tracked message count
+	count := b.cleanupCmd.Count(chatID)
+
+	text := fmt.Sprintf("Cleanup tracked files\n\nTracked messages: %d\n\nSelect what to delete:", count)
+
+	// Build options keyboard
+	options := builtin.CleanupOptions()
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	for _, opt := range options {
+		// Get count for this option
+		entries := b.cleanupCmd.GetEntriesToDelete(chatID, opt.Option)
+		label := fmt.Sprintf("%s (%d)", opt.Label, len(entries))
+		btn := tgbotapi.NewInlineKeyboardButtonData(label, CleanupCallbackData(string(opt.Option)))
+		rows = append(rows, []tgbotapi.InlineKeyboardButton{btn})
+	}
+
+	// Back button
+	backBtn := tgbotapi.NewInlineKeyboardButtonData("<< Back to Menu", backToMenu)
+	rows = append(rows, []tgbotapi.InlineKeyboardButton{backBtn})
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.ReplyMarkup = &keyboard
+	b.api.Send(edit)
+}
+
+// handleCleanupCallback processes a cleanup option selection.
+func (b *Bot) handleCleanupCallback(chatID int64, messageID int, option string, logger *slog.Logger) {
+	if b.cleanupCmd == nil || !b.cleanupCmd.Enabled() {
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, "Cleanup is not enabled.")
+		b.api.Send(edit)
+		return
+	}
+
+	// Execute cleanup
+	cleanupOption := builtin.CleanupOption(option)
+	deleted, failed, err := b.cleanupCmd.ExecuteCleanup(chatID, cleanupOption)
+
+	var resultText string
+	if err != nil {
+		resultText = fmt.Sprintf("Cleanup failed: %v", err)
+		logger.Error("cleanup failed", "error", err)
+	} else if deleted == 0 && failed == 0 {
+		resultText = "No messages to delete."
+	} else {
+		resultText = fmt.Sprintf("Cleanup complete.\n\nDeleted: %d messages", deleted)
+		if failed > 0 {
+			resultText += fmt.Sprintf("\nFailed: %d (messages may already be deleted or too old)", failed)
+		}
+	}
+
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, resultText)
+	b.api.Send(edit)
+
+	// Show menu again after a moment
+	b.sendMenu(chatID)
 }
