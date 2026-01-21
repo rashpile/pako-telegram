@@ -31,6 +31,7 @@ type YAMLCommandDef struct {
 	Name            string        `yaml:"name"`
 	Description     string        `yaml:"description"`
 	Command         string        `yaml:"command"`
+	Workdir         string        `yaml:"workdir"`
 	Timeout         time.Duration `yaml:"timeout"`
 	MaxOutput       int           `yaml:"max_output"`
 	Confirm         bool          `yaml:"confirm"`
@@ -46,9 +47,17 @@ type YAMLCommand struct {
 	executor Executor
 }
 
+// ExecuteConfig holds parameters for command execution.
+type ExecuteConfig struct {
+	Command string
+	Args    []string
+	Output  io.Writer
+	Workdir string
+}
+
 // Executor runs shell commands. Injected to allow testing.
 type Executor interface {
-	Execute(ctx context.Context, command string, args []string, output io.Writer) error
+	Execute(ctx context.Context, cfg ExecuteConfig) error
 }
 
 // Name returns the command name.
@@ -63,7 +72,12 @@ func (y *YAMLCommand) Description() string {
 
 // Execute runs the shell command with arguments.
 func (y *YAMLCommand) Execute(ctx context.Context, args []string, output io.Writer) error {
-	return y.executor.Execute(ctx, y.def.Command, args, output)
+	return y.executor.Execute(ctx, ExecuteConfig{
+		Command: y.def.Command,
+		Args:    args,
+		Output:  output,
+		Workdir: y.def.Workdir,
+	})
 }
 
 // Metadata returns command configuration.
@@ -105,7 +119,16 @@ func (y *YAMLCommand) CommandTemplate() string {
 
 // ExecuteRendered runs a pre-rendered command string.
 func (y *YAMLCommand) ExecuteRendered(ctx context.Context, rendered string, output io.Writer) error {
-	return y.executor.Execute(ctx, rendered, nil, output)
+	return y.executor.Execute(ctx, ExecuteConfig{
+		Command: rendered,
+		Output:  output,
+		Workdir: y.def.Workdir,
+	})
+}
+
+// Workdir returns the command's working directory.
+func (y *YAMLCommand) Workdir() string {
+	return y.def.Workdir
 }
 
 // FileResponse returns nil for basic YAML commands.

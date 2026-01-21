@@ -13,6 +13,7 @@ import (
 	"github.com/rashpile/pako-telegram/internal/auth"
 	"github.com/rashpile/pako-telegram/internal/command"
 	"github.com/rashpile/pako-telegram/internal/config"
+	"github.com/rashpile/pako-telegram/internal/fileref"
 	pkgcmd "github.com/rashpile/pako-telegram/pkg/command"
 )
 
@@ -390,6 +391,16 @@ func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Comma
 		logger.Error("failed to flush output", "error", err)
 	}
 
+	// Handle file references in output (if any)
+	if execErr == nil {
+		// Get workdir if this is a YAML command
+		workdir := ""
+		if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+			workdir = yamlCmd.Workdir()
+		}
+		b.handleFileReferences(chatID, streamer.Content(), workdir)
+	}
+
 	// Handle file response if command supports it
 	if execErr == nil {
 		if withFile, ok := cmd.(pkgcmd.WithFileResponse); ok {
@@ -420,6 +431,88 @@ func (b *Bot) sendAudioFile(chatID int64, resp *pkgcmd.FileResponse) {
 	if resp.Cleanup {
 		if err := os.Remove(resp.Path); err != nil {
 			logger.Warn("failed to cleanup file", "error", err)
+		}
+	}
+}
+
+// sendMediaGroup sends files as a Telegram media group.
+// Caption is applied to the first item in the group.
+func (b *Bot) sendMediaGroup(chatID int64, files []fileref.FileRef, caption string) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	logger := slog.With("chat_id", chatID, "file_count", len(files))
+
+	media := make([]any, len(files))
+	for i, f := range files {
+		var itemCaption string
+		if i == 0 {
+			itemCaption = caption
+		}
+
+		switch f.Type {
+		case fileref.FileTypePhoto:
+			m := tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(f.Path))
+			m.Caption = itemCaption
+			media[i] = m
+		case fileref.FileTypeVideo:
+			m := tgbotapi.NewInputMediaVideo(tgbotapi.FilePath(f.Path))
+			m.Caption = itemCaption
+			media[i] = m
+		case fileref.FileTypeAudio:
+			m := tgbotapi.NewInputMediaAudio(tgbotapi.FilePath(f.Path))
+			m.Caption = itemCaption
+			media[i] = m
+		default:
+			m := tgbotapi.NewInputMediaDocument(tgbotapi.FilePath(f.Path))
+			m.Caption = itemCaption
+			media[i] = m
+		}
+	}
+
+	mediaGroup := tgbotapi.NewMediaGroup(chatID, media)
+	if _, err := b.api.SendMediaGroup(mediaGroup); err != nil {
+		logger.Error("failed to send media group", "error", err)
+		return err
+	}
+
+	logger.Info("media group sent successfully")
+	return nil
+}
+
+// handleFileReferences processes command output for file references and sends them.
+// workdir is used to resolve relative file paths.
+func (b *Bot) handleFileReferences(chatID int64, output string, workdir string) {
+	if !fileref.HasFiles(output) {
+		return
+	}
+
+	logger := slog.With("chat_id", chatID)
+	result := fileref.ParseOutput(output, workdir)
+
+	// If there are errors (missing files), send them as a message
+	if len(result.Errors) > 0 {
+		errorText := strings.Join(result.Errors, "\n")
+		b.sendText(chatID, errorText)
+	}
+
+	// If no valid files, nothing more to do
+	if len(result.Files) == 0 {
+		return
+	}
+
+	// Group files and send each group
+	groups := fileref.GroupFiles(result.Files, b.defaults.MaxFilesPerGroup)
+	for i, group := range groups {
+		caption := ""
+		if i == 0 && result.Text != "" {
+			// First group gets the caption (cleaned text)
+			caption = result.Text
+		}
+
+		if err := b.sendMediaGroup(chatID, group, caption); err != nil {
+			logger.Error("failed to send media group", "group", i, "error", err)
 		}
 	}
 }
@@ -671,6 +764,11 @@ func (b *Bot) executeRenderedCommand(ctx context.Context, chatID int64, cmd *com
 
 	if err := streamer.Flush(); err != nil {
 		logger.Error("failed to flush output", "error", err)
+	}
+
+	// Handle file references in output (if any)
+	if execErr == nil {
+		b.handleFileReferences(chatID, streamer.Content(), cmd.Workdir())
 	}
 
 	// Handle file response if command supports it

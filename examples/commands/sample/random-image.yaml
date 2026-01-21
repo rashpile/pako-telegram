@@ -1,0 +1,26 @@
+name: random-image
+description: "Send a random image from the images folder"
+workdir: "/path/to/images"
+command: |
+  # Find all image files and pick one randomly
+  images=(*.jpg *.jpeg *.png *.gif *.webp)
+  # Filter to only existing files
+  existing=()
+  for f in "${images[@]}"; do
+    [ -e "$f" ] && existing+=("$f")
+  done
+
+  if [ ${#existing[@]} -eq 0 ]; then
+    echo "No images found in folder"
+    exit 0
+  fi
+
+  # Pick random image
+  random_idx=$((RANDOM % ${#existing[@]}))
+  selected="${existing[$random_idx]}"
+
+  echo "Here's a random image:"
+  echo "[file:$selected]"
+timeout: 10s
+category: media
+icon: "🖼️"

@@ -35,8 +35,9 @@ type DatabaseConfig struct {
 
 // DefaultsConfig holds default values for command execution.
 type DefaultsConfig struct {
-	Timeout   time.Duration `yaml:"timeout"`
-	MaxOutput int           `yaml:"max_output"`
+	Timeout          time.Duration `yaml:"timeout"`
+	MaxOutput        int           `yaml:"max_output"`
+	MaxFilesPerGroup int           `yaml:"max_files_per_group"`
 }
 
 // PodcastConfig holds configuration for podcast generation.
@@ -92,6 +93,10 @@ func (c *Config) setDefaults() error {
 
 	if c.Defaults.MaxOutput == 0 {
 		c.Defaults.MaxOutput = 5000
+	}
+
+	if c.Defaults.MaxFilesPerGroup == 0 {
+		c.Defaults.MaxFilesPerGroup = 10
 	}
 
 	return nil

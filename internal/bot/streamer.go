@@ -83,6 +83,13 @@ func (ms *MessageStreamer) Flush() error {
 	return nil
 }
 
+// Content returns the raw buffer content for post-processing.
+func (ms *MessageStreamer) Content() string {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.buffer.String()
+}
+
 // editMessage updates the Telegram message with current buffer contents.
 // Must be called with mutex held.
 func (ms *MessageStreamer) editMessage() {

@@ -4,9 +4,10 @@ package executor
 import (
 	"context"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
+
+	"github.com/rashpile/pako-telegram/internal/command"
 )
 
 // ShellExecutor runs commands via /bin/sh -c.
@@ -17,17 +18,22 @@ func NewShellExecutor() *ShellExecutor {
 	return &ShellExecutor{}
 }
 
-// Execute runs a shell command with arguments, streaming output to writer.
-func (e *ShellExecutor) Execute(ctx context.Context, command string, args []string, output io.Writer) error {
+// Execute runs a shell command with the provided configuration.
+func (e *ShellExecutor) Execute(ctx context.Context, cfg command.ExecuteConfig) error {
 	// Build full command with arguments
-	fullCmd := command
-	if len(args) > 0 {
-		fullCmd = command + " " + strings.Join(args, " ")
+	fullCmd := cfg.Command
+	if len(cfg.Args) > 0 {
+		fullCmd = cfg.Command + " " + strings.Join(cfg.Args, " ")
 	}
 
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", fullCmd)
-	cmd.Stdout = output
-	cmd.Stderr = output
+	cmd.Stdout = cfg.Output
+	cmd.Stderr = cfg.Output
+
+	// Set working directory if specified
+	if cfg.Workdir != "" {
+		cmd.Dir = cfg.Workdir
+	}
 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
