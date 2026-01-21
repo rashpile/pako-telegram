@@ -1,0 +1,68 @@
+name: latest-image
+description: "Send the most recently created image (skips already sent)"
+workdir: "/path/to/images"
+command: |
+  MAX_FILES=5
+  SENT_FILE="/tmp/pako-latest-image-sent.txt"
+  CACHE_FILE="/tmp/pako-latest-image-cache.txt"
+  touch "$SENT_FILE"
+
+  # Rebuild cache if older than 5 minutes or missing
+  rebuild_cache=0
+  if [ ! -f "$CACHE_FILE" ]; then
+    rebuild_cache=1
+  elif [ "$(find "$CACHE_FILE" -mmin +5 2>/dev/null)" ]; then
+    rebuild_cache=1
+  fi
+
+  if [ "$rebuild_cache" = "1" ]; then
+    # Build sorted cache: timestamp<tab>path (newest first)
+    # macOS: use stat -f
+    if stat -f '%m' . >/dev/null 2>&1; then
+      find . -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.webp" \) -print0 2>/dev/null | \
+        xargs -0 stat -f '%m	%N' 2>/dev/null | sort -rn > "$CACHE_FILE"
+    else
+      # Linux: use stat --format
+      find . -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.webp" \) -print0 2>/dev/null | \
+        xargs -0 stat --format='%Y	%n' 2>/dev/null | sort -rn > "$CACHE_FILE"
+    fi
+  fi
+
+  if [ ! -s "$CACHE_FILE" ]; then
+    echo "No images found"
+    exit 0
+  fi
+
+  # Find up to 5 unsent images
+  count=0
+  files=()
+  abs_paths=()
+
+  while IFS=$'\t' read -r ts path; do
+    abs_path="$(cd "$(dirname "$path")" 2>/dev/null && pwd)/$(basename "$path")"
+    if ! grep -qxF "$abs_path" "$SENT_FILE" 2>/dev/null; then
+      files+=("$path")
+      abs_paths+=("$abs_path")
+      ((count++))
+      [ "$count" -ge "$MAX_FILES" ] && break
+    fi
+  done < "$CACHE_FILE"
+
+  if [ "$count" -eq 0 ]; then
+    echo "All images have been sent"
+    echo "Run: rm $SENT_FILE to reset"
+    exit 0
+  fi
+
+  # Mark all as sent
+  for abs in "${abs_paths[@]}"; do
+    echo "$abs" >> "$SENT_FILE"
+  done
+
+  echo "Latest $count unsent images:"
+  for f in "${files[@]}"; do
+    echo "[file:$f]"
+  done
+timeout: 60s
+category: media
+icon: "🖼️"
