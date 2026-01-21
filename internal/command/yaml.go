@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -129,34 +130,36 @@ func NewLoader(dir string, defaults config.DefaultsConfig, executor Executor) *L
 	}
 }
 
-// Load reads all .yaml files from the configured directory.
+// Load reads all .yaml files from the configured directory and subdirectories.
 func (l *Loader) Load() ([]pkgcmd.Command, error) {
-	entries, err := os.ReadDir(l.dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // No commands directory is OK
-		}
-		return nil, fmt.Errorf("read commands directory: %w", err)
+	if _, err := os.Stat(l.dir); os.IsNotExist(err) {
+		return nil, nil // No commands directory is OK
 	}
 
 	var commands []pkgcmd.Command
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	err := filepath.WalkDir(l.dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
 		}
 
-		ext := filepath.Ext(entry.Name())
+		ext := filepath.Ext(d.Name())
 		if ext != ".yaml" && ext != ".yml" {
-			continue
+			return nil
 		}
 
-		path := filepath.Join(l.dir, entry.Name())
 		cmd, err := l.loadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("load %s: %w", entry.Name(), err)
+			return fmt.Errorf("load %s: %w", path, err)
 		}
 
 		commands = append(commands, cmd)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk commands directory: %w", err)
 	}
 
 	return commands, nil
