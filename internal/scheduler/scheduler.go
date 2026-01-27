@@ -16,11 +16,14 @@ type TimeOfDay struct {
 	Minute int
 }
 
-// ScheduledCommand represents a command with its schedule times.
+// ScheduledCommand represents a command with its schedule configuration.
 type ScheduledCommand struct {
-	Name    string
-	Times   []TimeOfDay
-	Command pkgcmd.Command
+	Name          string
+	Times         []TimeOfDay   // Time-of-day scheduling (e.g., 09:00, 18:00)
+	Interval      time.Duration // Interval scheduling (e.g., 5m)
+	InitialPaused bool          // Start with schedule paused
+	Command       pkgcmd.Command
+	lastRun       time.Time // For interval scheduling
 }
 
 // CommandExecutor executes commands and sends output to chats.
@@ -39,6 +42,7 @@ type Scheduler struct {
 	chatIDs  []int64
 	executor CommandExecutor
 	commands []ScheduledCommand
+	paused   map[string]bool // paused command names
 	mu       sync.RWMutex
 	wakeup   chan struct{} // signal to recalculate next execution
 }
@@ -48,14 +52,55 @@ func New(cfg Config) *Scheduler {
 	return &Scheduler{
 		chatIDs:  cfg.ChatIDs,
 		executor: cfg.Executor,
+		paused:   make(map[string]bool),
 		wakeup:   make(chan struct{}, 1),
 	}
+}
+
+// IsPaused returns true if the command is paused.
+func (s *Scheduler) IsPaused(name string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.paused[name]
+}
+
+// SetPaused sets the paused state for a command.
+func (s *Scheduler) SetPaused(name string, paused bool) {
+	s.mu.Lock()
+	if paused {
+		s.paused[name] = true
+	} else {
+		delete(s.paused, name)
+	}
+	s.mu.Unlock()
+
+	// Signal to recalculate next execution
+	select {
+	case s.wakeup <- struct{}{}:
+	default:
+	}
+
+	slog.Info("scheduler command paused state changed", "command", name, "paused", paused)
 }
 
 // UpdateCommands updates the list of scheduled commands.
 // This can be called when YAML commands are reloaded.
 func (s *Scheduler) UpdateCommands(commands []ScheduledCommand) {
 	s.mu.Lock()
+
+	// Build set of existing command names (to preserve paused state for existing commands)
+	existing := make(map[string]bool)
+	for _, cmd := range s.commands {
+		existing[cmd.Name] = true
+	}
+
+	// Apply InitialPaused only for new commands
+	for _, cmd := range commands {
+		if !existing[cmd.Name] && cmd.InitialPaused {
+			s.paused[cmd.Name] = true
+		}
+	}
+
 	s.commands = commands
 	s.mu.Unlock()
 
@@ -129,6 +174,29 @@ func (s *Scheduler) nextExecution() (time.Time, *ScheduledCommand) {
 
 	for i := range s.commands {
 		cmd := &s.commands[i]
+
+		// Skip paused commands
+		if s.paused[cmd.Name] {
+			continue
+		}
+
+		// Handle interval scheduling
+		if cmd.Interval > 0 {
+			var nextRun time.Time
+			if cmd.lastRun.IsZero() {
+				// First run: execute immediately
+				nextRun = now
+			} else {
+				nextRun = cmd.lastRun.Add(cmd.Interval)
+			}
+			if earliest.IsZero() || nextRun.Before(earliest) {
+				earliest = nextRun
+				earliestCmd = cmd
+			}
+			continue
+		}
+
+		// Handle time-of-day scheduling
 		for _, t := range cmd.Times {
 			nextRun := nextTimeOfDay(now, t)
 			if earliest.IsZero() || nextRun.Before(earliest) {
@@ -161,6 +229,13 @@ func nextTimeOfDay(now time.Time, tod TimeOfDay) time.Time {
 // executeForAllChats runs the command and sends output to all configured chats.
 func (s *Scheduler) executeForAllChats(ctx context.Context, cmd *ScheduledCommand) {
 	slog.Info("executing scheduled command", "command", cmd.Name)
+
+	// Update lastRun for interval commands
+	if cmd.Interval > 0 {
+		s.mu.Lock()
+		cmd.lastRun = time.Now()
+		s.mu.Unlock()
+	}
 
 	for _, chatID := range s.chatIDs {
 		if err := s.executor.ExecuteScheduled(ctx, chatID, cmd.Command); err != nil {

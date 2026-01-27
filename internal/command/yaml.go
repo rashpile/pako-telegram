@@ -39,7 +39,9 @@ type YAMLCommandDef struct {
 	Icon            string        `yaml:"icon"`
 	Arguments       []ArgumentDef `yaml:"arguments"`
 	ArgumentTimeout time.Duration `yaml:"argument_timeout"`
-	Schedule        []string      `yaml:"schedule"` // List of "HH:MM" times for scheduled execution
+	Schedule        []string      `yaml:"schedule"`       // List of "HH:MM" times for scheduled execution
+	Interval        time.Duration `yaml:"interval"`       // Interval for periodic execution (e.g., "5m")
+	InitialPaused   bool          `yaml:"initial_paused"` // Start with schedule paused
 }
 
 // YAMLCommand is a Command implementation backed by a shell command.
@@ -143,6 +145,16 @@ func (y *YAMLCommand) Schedule() []string {
 	return y.def.Schedule
 }
 
+// Interval returns the interval for periodic execution.
+func (y *YAMLCommand) Interval() time.Duration {
+	return y.def.Interval
+}
+
+// InitialPaused returns true if the command should start with schedule paused.
+func (y *YAMLCommand) InitialPaused() bool {
+	return y.def.InitialPaused
+}
+
 // Loader loads YAML command definitions from a directory.
 type Loader struct {
 	dir      string
@@ -222,6 +234,16 @@ func (l *Loader) loadFile(path string) (*YAMLCommand, error) {
 			if err := validateTimeFormat(t); err != nil {
 				return nil, fmt.Errorf("invalid schedule time %q: %w", t, err)
 			}
+		}
+	}
+
+	// Validate interval
+	if def.Interval > 0 {
+		if len(def.Arguments) > 0 {
+			return nil, fmt.Errorf("commands with arguments cannot use interval scheduling")
+		}
+		if len(def.Schedule) > 0 {
+			return nil, fmt.Errorf("cannot use both schedule and interval on the same command")
 		}
 	}
 

@@ -178,14 +178,6 @@ func (f *fakeExecutor) ExecuteScheduled(ctx context.Context, chatID int64, cmd p
 	return nil
 }
 
-func (f *fakeExecutor) getExecuted() []executedRecord {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	result := make([]executedRecord, len(f.executed))
-	copy(result, f.executed)
-	return result
-}
-
 func TestSchedulerNextExecution(t *testing.T) {
 	exec := &fakeExecutor{}
 	s := New(Config{
@@ -255,5 +247,99 @@ func TestSchedulerUpdateCommands(t *testing.T) {
 	_, cmd = s.nextExecution()
 	if cmd != nil {
 		t.Error("expected no command after clearing")
+	}
+}
+
+func TestSchedulerIntervalFirstRun(t *testing.T) {
+	exec := &fakeExecutor{}
+	s := New(Config{
+		ChatIDs:  []int64{123},
+		Executor: exec,
+	})
+
+	cmd := &fakeCommand{name: "interval-cmd"}
+
+	// Add interval command
+	s.UpdateCommands([]ScheduledCommand{
+		{Name: "interval-cmd", Interval: 5 * time.Minute, Command: cmd},
+	})
+
+	now := time.Now()
+	nextTime, nextCmd := s.nextExecution()
+
+	if nextCmd == nil {
+		t.Fatal("nextExecution returned nil command")
+	}
+
+	if nextCmd.Name != "interval-cmd" {
+		t.Errorf("nextExecution() selected %q, want %q", nextCmd.Name, "interval-cmd")
+	}
+
+	// First run should be immediate (within a second of now)
+	if nextTime.Sub(now) > time.Second {
+		t.Errorf("first run should be immediate, got %v", nextTime.Sub(now))
+	}
+}
+
+func TestSchedulerIntervalSubsequentRun(t *testing.T) {
+	exec := &fakeExecutor{}
+	s := New(Config{
+		ChatIDs:  []int64{123},
+		Executor: exec,
+	})
+
+	cmd := &fakeCommand{name: "interval-cmd"}
+
+	// Add interval command with lastRun set
+	s.UpdateCommands([]ScheduledCommand{
+		{Name: "interval-cmd", Interval: 5 * time.Minute, Command: cmd},
+	})
+
+	// Simulate first run
+	now := time.Now()
+	s.mu.Lock()
+	s.commands[0].lastRun = now
+	s.mu.Unlock()
+
+	nextTime, nextCmd := s.nextExecution()
+
+	if nextCmd == nil {
+		t.Fatal("nextExecution returned nil command")
+	}
+
+	// Next run should be ~5 minutes from now
+	expectedNext := now.Add(5 * time.Minute)
+	diff := nextTime.Sub(expectedNext)
+	if diff < -time.Second || diff > time.Second {
+		t.Errorf("next run should be ~5 minutes from lastRun, got %v (diff: %v)", nextTime, diff)
+	}
+}
+
+func TestSchedulerIntervalVsTimeOfDay(t *testing.T) {
+	exec := &fakeExecutor{}
+	s := New(Config{
+		ChatIDs:  []int64{123},
+		Executor: exec,
+	})
+
+	cmd1 := &fakeCommand{name: "interval-cmd"}
+	cmd2 := &fakeCommand{name: "time-cmd"}
+
+	// Interval command should run first (immediately on first run)
+	// Time-of-day command is scheduled for later
+	s.UpdateCommands([]ScheduledCommand{
+		{Name: "interval-cmd", Interval: 1 * time.Hour, Command: cmd1},
+		{Name: "time-cmd", Times: []TimeOfDay{{23, 59}}, Command: cmd2},
+	})
+
+	_, nextCmd := s.nextExecution()
+
+	if nextCmd == nil {
+		t.Fatal("nextExecution returned nil command")
+	}
+
+	// Interval command should be selected (runs immediately first time)
+	if nextCmd.Name != "interval-cmd" {
+		t.Errorf("nextExecution() selected %q, want %q (interval runs first)", nextCmd.Name, "interval-cmd")
 	}
 }

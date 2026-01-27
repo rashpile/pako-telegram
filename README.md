@@ -11,6 +11,7 @@ Internal Telegram bot for executing ops tasks on your laptop.
 - Chat ID allowlist security
 - Audit logging to SQLite
 - Hot-reload configuration
+- Scheduled commands - run at specific times or intervals
 - File output format - send files to Telegram from command output
 - Media group support - send multiple files as albums
 - Cleanup functionality - delete previously sent files from chat
@@ -95,6 +96,13 @@ max_output: 10000      # Max output characters
 confirm: true          # Require confirmation before running
 category: deploy       # Category for menu grouping
 icon: "🚀"             # Emoji icon for menu
+
+# Scheduling options (mutually exclusive)
+schedule:              # Run at specific times (HH:MM format)
+  - "09:00"
+  - "18:00"
+interval: 5m           # Run every X duration (e.g., 5m, 1h)
+initial_paused: false  # Start with schedule paused (default: false)
 ```
 
 ## File Output Format
@@ -125,6 +133,36 @@ command: |
 category: media
 icon: "🖼️"
 ```
+
+## Scheduled Commands
+
+Commands can run automatically at specific times or intervals:
+
+**Time-of-day scheduling:**
+```yaml
+name: daily-report
+command: "./generate-report.sh"
+schedule:
+  - "09:00"
+  - "18:00"
+```
+
+**Interval scheduling:**
+```yaml
+name: health-check
+command: "./check-health.sh"
+interval: 5m
+```
+
+**Features:**
+- Scheduled commands run for all allowed chat IDs
+- When you invoke a scheduled command manually (e.g., `/health-check`), a menu appears with options to:
+  - **Run now** - Execute the command immediately
+  - **Pause/Resume schedule** - Toggle automatic execution
+- Pause state is kept in memory (resets on bot restart)
+- Use `initial_paused: true` to start commands paused
+
+**Note:** Commands with arguments cannot be scheduled.
 
 ## Cleanup
 

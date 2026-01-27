@@ -128,8 +128,9 @@ func run(configPath string) error {
 	// Extract scheduled commands and create scheduler
 	sched := createScheduler(yamlCommands, cfg.Telegram.AllowedChatIDs, b)
 
-	// Wire scheduler with reload command
+	// Wire scheduler with bot and reload command
 	if sched != nil {
+		b.SetScheduler(sched)
 		reloadCmd.SetScheduler(&schedulerAdapter{sched: sched})
 	}
 
@@ -193,7 +194,7 @@ func createScheduler(cmds []pkgcmd.Command, chatIDs []int64, exec scheduler.Comm
 	return sched
 }
 
-// extractScheduledCommands extracts commands with schedules from a list.
+// extractScheduledCommands extracts commands with schedules or intervals from a list.
 func extractScheduledCommands(cmds []pkgcmd.Command) []scheduler.ScheduledCommand {
 	var scheduled []scheduler.ScheduledCommand
 
@@ -205,22 +206,32 @@ func extractScheduledCommands(cmds []pkgcmd.Command) []scheduler.ScheduledComman
 		}
 
 		schedTimes := yamlCmd.Schedule()
-		if len(schedTimes) == 0 {
+		interval := yamlCmd.Interval()
+
+		// Skip if no scheduling configured
+		if len(schedTimes) == 0 && interval == 0 {
 			continue
 		}
 
-		times, err := scheduler.ParseTimes(schedTimes)
-		if err != nil {
-			// Should not happen - already validated during load
-			slog.Warn("invalid schedule times", "command", cmd.Name(), "error", err)
-			continue
+		sc := scheduler.ScheduledCommand{
+			Name:          cmd.Name(),
+			Interval:      interval,
+			InitialPaused: yamlCmd.InitialPaused(),
+			Command:       cmd,
 		}
 
-		scheduled = append(scheduled, scheduler.ScheduledCommand{
-			Name:    cmd.Name(),
-			Times:   times,
-			Command: cmd,
-		})
+		// Parse time-of-day schedule if present
+		if len(schedTimes) > 0 {
+			times, err := scheduler.ParseTimes(schedTimes)
+			if err != nil {
+				// Should not happen - already validated during load
+				slog.Warn("invalid schedule times", "command", cmd.Name(), "error", err)
+				continue
+			}
+			sc.Times = times
+		}
+
+		scheduled = append(scheduled, sc)
 	}
 
 	return scheduled
