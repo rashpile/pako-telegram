@@ -823,6 +823,21 @@ func (b *Bot) executeRenderedCommand(ctx context.Context, chatID int64, cmd *com
 	}
 }
 
+// ExecuteScheduled runs a command for scheduled execution.
+// Used by the scheduler for timed command execution.
+func (b *Bot) ExecuteScheduled(ctx context.Context, chatID int64, cmd pkgcmd.Command) error {
+	logger := slog.With("chat_id", chatID, "command", cmd.Name(), "trigger", "schedule")
+	logger.Info("executing scheduled command")
+
+	// Send notification
+	b.sendText(chatID, fmt.Sprintf("Scheduled: Running /%s...", cmd.Name()))
+
+	// Execute command (confirmation is skipped for scheduled runs)
+	b.executeCommand(ctx, chatID, cmd, nil)
+
+	return nil
+}
+
 // showCleanupMenu displays the cleanup options menu.
 func (b *Bot) showCleanupMenu(chatID int64, messageID int) {
 	if b.cleanupCmd == nil || !b.cleanupCmd.Enabled() {
