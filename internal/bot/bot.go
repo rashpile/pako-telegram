@@ -275,6 +275,16 @@ func (b *Bot) handleMenuCallback(ctx context.Context, query *tgbotapi.CallbackQu
 			return
 		}
 
+		// Check if command is a scheduled/interval command - show schedule menu
+		if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+			if len(yamlCmd.Schedule()) > 0 || yamlCmd.Interval() > 0 {
+				deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+				b.api.Request(deleteMsg)
+				b.showScheduleMenu(chatID, yamlCmd)
+				return
+			}
+		}
+
 		// Check if command is a YAMLCommand with arguments
 		if yamlCmd, ok := cmd.(*command.YAMLCommand); ok && yamlCmd.HasArguments() {
 			// Delete the menu message and start argument collection
