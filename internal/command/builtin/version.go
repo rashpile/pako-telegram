@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/rashpile/pako-telegram/internal/version"
+	pkgcmd "github.com/rashpile/pako-telegram/pkg/command"
 )
 
 // VersionCommand shows the current bot version.
@@ -24,6 +25,14 @@ func (v *VersionCommand) Name() string {
 // Description returns the version command description.
 func (v *VersionCommand) Description() string {
 	return "Show current bot version"
+}
+
+// Category returns the command's category for menu grouping.
+func (v *VersionCommand) Category() pkgcmd.CategoryInfo {
+	return pkgcmd.CategoryInfo{
+		Name: "system",
+		Icon: "ℹ️",
+	}
 }
 
 // Execute writes the version information.
