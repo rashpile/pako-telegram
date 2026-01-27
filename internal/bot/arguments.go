@@ -81,18 +81,9 @@ func (c *ArgumentCollector) StartSession(chatID int64, cmd *command.YAMLCommand)
 		timeout = c.defaultTimeout
 	}
 
-	// Filter to arguments that need prompting (required without default, or choice types)
-	var toPrompt []command.ArgumentDef
+	// All arguments are prompted (defaults are shown as highlighted options)
+	toPrompt := slices.Clone(args)
 	collected := make(map[string]string)
-
-	for _, arg := range args {
-		// If has default and not required, use default
-		if arg.Default != "" && !arg.Required {
-			collected[arg.Name] = arg.Default
-		} else {
-			toPrompt = append(toPrompt, arg)
-		}
-	}
 
 	session := &ArgumentSession{
 		ChatID:     chatID,
@@ -148,13 +139,19 @@ func (c *ArgumentCollector) ProcessInput(chatID int64, input string) (errMsg str
 		return ""
 	}
 
+	// Use default if input is empty and default exists
+	value := input
+	if strings.TrimSpace(input) == "" && arg.Default != "" {
+		value = arg.Default
+	}
+
 	// Validate input
-	if err := validateArgument(arg, input); err != nil {
+	if err := validateArgument(arg, value); err != nil {
 		return err.Error()
 	}
 
 	// Store the value
-	session.Collected[arg.Name] = input
+	session.Collected[arg.Name] = value
 	session.CurrentIdx++
 
 	return ""
@@ -257,11 +254,15 @@ func RenderCommand(cmdTemplate string, args map[string]string) (string, error) {
 
 // BuildArgumentPrompt creates a message for prompting an argument.
 func BuildArgumentPrompt(arg *command.ArgumentDef) string {
+	if arg.Default != "" {
+		return fmt.Sprintf("%s\n\nDefault: %s (press Enter to use)", arg.Description, arg.Default)
+	}
 	return arg.Description
 }
 
 // BuildChoiceKeyboard creates an inline keyboard for choice arguments.
 // Returns nil if there are too many choices (use text list instead).
+// The default option (if any) is highlighted with a checkmark.
 func BuildChoiceKeyboard(arg *command.ArgumentDef) *tgbotapi.InlineKeyboardMarkup {
 	if arg.Type != "choice" || len(arg.Choices) == 0 || len(arg.Choices) > maxInlineChoices {
 		return nil
@@ -269,7 +270,11 @@ func BuildChoiceKeyboard(arg *command.ArgumentDef) *tgbotapi.InlineKeyboardMarku
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, choice := range arg.Choices {
-		btn := tgbotapi.NewInlineKeyboardButtonData(choice, "arg:"+choice)
+		label := choice
+		if choice == arg.Default {
+			label = "✓ " + choice + " (default)"
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData(label, "arg:"+choice)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
 	}
 
@@ -278,6 +283,7 @@ func BuildChoiceKeyboard(arg *command.ArgumentDef) *tgbotapi.InlineKeyboardMarku
 }
 
 // BuildChoiceTextList creates a text list for choice arguments with many options.
+// The default option (if any) is highlighted.
 func BuildChoiceTextList(arg *command.ArgumentDef) string {
 	if arg.Type != "choice" || len(arg.Choices) <= maxInlineChoices {
 		return ""
@@ -287,7 +293,14 @@ func BuildChoiceTextList(arg *command.ArgumentDef) string {
 	sb.WriteString(arg.Description)
 	sb.WriteString("\n\nOptions:\n")
 	for i, choice := range arg.Choices {
-		fmt.Fprintf(&sb, "%d. %s\n", i+1, choice)
+		if choice == arg.Default {
+			fmt.Fprintf(&sb, "%d. ✓ %s (default)\n", i+1, choice)
+		} else {
+			fmt.Fprintf(&sb, "%d. %s\n", i+1, choice)
+		}
+	}
+	if arg.Default != "" {
+		sb.WriteString("\nPress Enter to use default.")
 	}
 	return sb.String()
 }
