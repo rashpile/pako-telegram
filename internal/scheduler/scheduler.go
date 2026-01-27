@@ -88,16 +88,23 @@ func (s *Scheduler) SetPaused(name string, paused bool) {
 func (s *Scheduler) UpdateCommands(commands []ScheduledCommand) {
 	s.mu.Lock()
 
-	// Build set of existing command names (to preserve paused state for existing commands)
-	existing := make(map[string]bool)
-	for _, cmd := range s.commands {
-		existing[cmd.Name] = true
+	// Build map of existing commands to preserve state
+	existing := make(map[string]*ScheduledCommand)
+	for i := range s.commands {
+		existing[s.commands[i].Name] = &s.commands[i]
 	}
 
-	// Apply InitialPaused only for new commands
-	for _, cmd := range commands {
-		if !existing[cmd.Name] && cmd.InitialPaused {
-			s.paused[cmd.Name] = true
+	// Process new commands
+	for i := range commands {
+		cmd := &commands[i]
+		if old, found := existing[cmd.Name]; found {
+			// Preserve lastRun for existing interval commands
+			cmd.lastRun = old.lastRun
+		} else {
+			// New command - apply InitialPaused if set
+			if cmd.InitialPaused {
+				s.paused[cmd.Name] = true
+			}
 		}
 	}
 
