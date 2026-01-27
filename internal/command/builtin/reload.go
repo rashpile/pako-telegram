@@ -18,10 +18,16 @@ type CommandReloader interface {
 	Reload(commands []pkgcmd.Command)
 }
 
+// SchedulerUpdater updates scheduled commands.
+type SchedulerUpdater interface {
+	UpdateScheduledCommands(commands []pkgcmd.Command)
+}
+
 // ReloadCommand reloads YAML command configurations.
 type ReloadCommand struct {
-	loader   CommandLoader
-	reloader CommandReloader
+	loader    CommandLoader
+	reloader  CommandReloader
+	scheduler SchedulerUpdater
 }
 
 // NewReloadCommand creates a reload command.
@@ -30,6 +36,11 @@ func NewReloadCommand(loader CommandLoader, reloader CommandReloader) *ReloadCom
 		loader:   loader,
 		reloader: reloader,
 	}
+}
+
+// SetScheduler sets the scheduler for reload updates.
+func (r *ReloadCommand) SetScheduler(s SchedulerUpdater) {
+	r.scheduler = s
 }
 
 // Name returns "reload".
@@ -50,6 +61,11 @@ func (r *ReloadCommand) Execute(ctx context.Context, args []string, output io.Wr
 	}
 
 	r.reloader.Reload(commands)
+
+	// Update scheduler with new commands
+	if r.scheduler != nil {
+		r.scheduler.UpdateScheduledCommands(commands)
+	}
 
 	fmt.Fprintf(output, "Reloaded %d commands\n", len(commands))
 

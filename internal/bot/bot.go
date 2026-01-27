@@ -16,6 +16,7 @@ import (
 	"github.com/rashpile/pako-telegram/internal/config"
 	"github.com/rashpile/pako-telegram/internal/fileref"
 	"github.com/rashpile/pako-telegram/internal/msgstore"
+	"github.com/rashpile/pako-telegram/internal/scheduler"
 	pkgcmd "github.com/rashpile/pako-telegram/pkg/command"
 )
 
@@ -41,6 +42,7 @@ type Bot struct {
 	allowedChatIDs []int64
 	msgStore       *msgstore.Store
 	cleanupCmd     *builtin.CleanupCommand
+	scheduler      *scheduler.Scheduler
 }
 
 // New creates a Bot with the given dependencies.
@@ -91,6 +93,11 @@ func (b *Bot) NotifyStartup() {
 // Registry returns the command registry for registration.
 func (b *Bot) Registry() *command.Registry {
 	return b.registry
+}
+
+// SetScheduler sets the scheduler reference for pause/resume functionality.
+func (b *Bot) SetScheduler(s *scheduler.Scheduler) {
+	b.scheduler = s
 }
 
 // Run starts the bot's update loop. Blocks until context is cancelled.
@@ -182,6 +189,12 @@ func (b *Bot) handleCallback(ctx context.Context, query *tgbotapi.CallbackQuery)
 	// Check if this is a menu callback
 	if IsMenuCallback(query.Data) {
 		b.handleMenuCallback(ctx, query)
+		return
+	}
+
+	// Check if this is a schedule callback
+	if IsScheduleCallback(query.Data) {
+		b.handleScheduleCallback(ctx, query)
 		return
 	}
 
@@ -336,6 +349,14 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		logger.Debug("unknown command")
 		b.sendText(chatID, fmt.Sprintf("Unknown command: /%s\nUse /help to see available commands.", cmdName))
 		return
+	}
+
+	// Check if command is a scheduled/interval command - show menu if so
+	if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+		if len(yamlCmd.Schedule()) > 0 || yamlCmd.Interval() > 0 {
+			b.showScheduleMenu(chatID, yamlCmd)
+			return
+		}
 	}
 
 	// Check if command is a YAMLCommand with arguments that need collection
@@ -823,6 +844,21 @@ func (b *Bot) executeRenderedCommand(ctx context.Context, chatID int64, cmd *com
 	}
 }
 
+// ExecuteScheduled runs a command for scheduled execution.
+// Used by the scheduler for timed command execution.
+func (b *Bot) ExecuteScheduled(ctx context.Context, chatID int64, cmd pkgcmd.Command) error {
+	logger := slog.With("chat_id", chatID, "command", cmd.Name(), "trigger", "schedule")
+	logger.Info("executing scheduled command")
+
+	// Send notification
+	b.sendText(chatID, fmt.Sprintf("Scheduled: Running /%s...", cmd.Name()))
+
+	// Execute command (confirmation is skipped for scheduled runs)
+	b.executeCommand(ctx, chatID, cmd, nil)
+
+	return nil
+}
+
 // showCleanupMenu displays the cleanup options menu.
 func (b *Bot) showCleanupMenu(chatID int64, messageID int) {
 	if b.cleanupCmd == nil || !b.cleanupCmd.Enabled() {
@@ -889,4 +925,117 @@ func (b *Bot) handleCleanupCallback(chatID int64, messageID int, option string, 
 
 	// Show menu again after a moment
 	b.sendMenu(chatID)
+}
+
+// showScheduleMenu displays options for a scheduled command.
+func (b *Bot) showScheduleMenu(chatID int64, cmd *command.YAMLCommand) {
+	// Build status text
+	var statusParts []string
+	if len(cmd.Schedule()) > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("Schedule: %s", strings.Join(cmd.Schedule(), ", ")))
+	}
+	if cmd.Interval() > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("Interval: %s", cmd.Interval()))
+	}
+
+	// Check pause state
+	isPaused := false
+	if b.scheduler != nil {
+		isPaused = b.scheduler.IsPaused(cmd.Name())
+	}
+
+	if isPaused {
+		statusParts = append(statusParts, "Status: Paused")
+	} else {
+		statusParts = append(statusParts, "Status: Running")
+	}
+
+	text := fmt.Sprintf("/%s\n\n%s\n\nSelect action:", cmd.Name(), strings.Join(statusParts, "\n"))
+
+	// Build keyboard
+	var rows [][]tgbotapi.InlineKeyboardButton
+
+	// Run now button
+	runBtn := tgbotapi.NewInlineKeyboardButtonData("▶ Run now", ScheduleCallbackData("run", cmd.Name()))
+	rows = append(rows, []tgbotapi.InlineKeyboardButton{runBtn})
+
+	// Pause/Resume button
+	if isPaused {
+		resumeBtn := tgbotapi.NewInlineKeyboardButtonData("▶ Resume schedule", ScheduleCallbackData("resume", cmd.Name()))
+		rows = append(rows, []tgbotapi.InlineKeyboardButton{resumeBtn})
+	} else {
+		pauseBtn := tgbotapi.NewInlineKeyboardButtonData("⏸ Pause schedule", ScheduleCallbackData("pause", cmd.Name()))
+		rows = append(rows, []tgbotapi.InlineKeyboardButton{pauseBtn})
+	}
+
+	// Back button
+	backBtn := tgbotapi.NewInlineKeyboardButtonData("<< Back to Menu", backToMenu)
+	rows = append(rows, []tgbotapi.InlineKeyboardButton{backBtn})
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	b.api.Send(msg)
+}
+
+// handleScheduleCallback processes schedule menu callbacks.
+func (b *Bot) handleScheduleCallback(ctx context.Context, query *tgbotapi.CallbackQuery) {
+	chatID := query.Message.Chat.ID
+	messageID := query.Message.MessageID
+	logger := slog.With("chat_id", chatID, "callback", query.Data)
+
+	action, cmdName := ParseScheduleCallback(query.Data)
+	if cmdName == "" {
+		logger.Warn("invalid schedule callback data")
+		return
+	}
+
+	cmd := b.registry.Get(cmdName)
+	if cmd == nil {
+		logger.Warn("command not found", "command", cmdName)
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, "Command not found.")
+		b.api.Send(edit)
+		return
+	}
+
+	yamlCmd, ok := cmd.(*command.YAMLCommand)
+	if !ok {
+		logger.Warn("command is not a YAML command", "command", cmdName)
+		return
+	}
+
+	switch action {
+	case "run":
+		// Delete menu and execute command
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+		b.api.Request(deleteMsg)
+
+		logger.Info("executing scheduled command manually", "command", cmdName)
+		b.sendText(chatID, fmt.Sprintf("Running /%s...", cmdName))
+		b.executeCommand(ctx, chatID, cmd, nil)
+		b.sendMenu(chatID)
+
+	case "pause":
+		if b.scheduler != nil {
+			b.scheduler.SetPaused(cmdName, true)
+		}
+		logger.Info("paused scheduled command", "command", cmdName)
+
+		// Refresh the schedule menu
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+		b.api.Request(deleteMsg)
+		b.showScheduleMenu(chatID, yamlCmd)
+
+	case "resume":
+		if b.scheduler != nil {
+			b.scheduler.SetPaused(cmdName, false)
+		}
+		logger.Info("resumed scheduled command", "command", cmdName)
+
+		// Refresh the schedule menu
+		deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+		b.api.Request(deleteMsg)
+		b.showScheduleMenu(chatID, yamlCmd)
+	}
 }

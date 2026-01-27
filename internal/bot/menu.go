@@ -27,6 +27,7 @@ const (
 	categoryPrefix = "cat:"
 	commandPrefix  = "cmd:"
 	cleanupPrefix  = "cleanup:"
+	schedPrefix    = "sched:"
 	backToMenu     = "menu:main"
 )
 
@@ -199,4 +200,25 @@ func IsCleanupCallback(data string) bool {
 // CleanupCallbackData creates a cleanup callback data string.
 func CleanupCallbackData(option string) string {
 	return cleanupPrefix + option
+}
+
+// IsScheduleCallback checks if the callback is a schedule-related callback.
+func IsScheduleCallback(data string) bool {
+	return strings.HasPrefix(data, schedPrefix)
+}
+
+// ParseScheduleCallback extracts the action and command name from a schedule callback.
+// Returns action ("run", "pause", "resume") and command name.
+func ParseScheduleCallback(data string) (action, cmdName string) {
+	trimmed := strings.TrimPrefix(data, schedPrefix)
+	parts := strings.SplitN(trimmed, ":", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", ""
+}
+
+// ScheduleCallbackData creates a schedule callback data string.
+func ScheduleCallbackData(action, cmdName string) string {
+	return schedPrefix + action + ":" + cmdName
 }

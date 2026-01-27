@@ -1,0 +1,19 @@
+name: daily-report
+description: "Generate daily system report"
+command: |
+  echo "=== Daily Report ==="
+  echo ""
+  echo "--- Uptime ---"
+  uptime
+  echo ""
+  echo "--- Disk Usage ---"
+  df -h / | awk 'NR>1 {
+    pct=$5; gsub(/%/,"",pct)
+    printf "  %s used (%s free)\n", $5, $4
+  }'
+timeout: 30s
+category: system
+icon: "📊"
+schedule:
+  - "09:00"
+  - "18:00"
