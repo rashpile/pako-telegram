@@ -59,8 +59,8 @@ func (r *Registry) Reload(commands []pkgcmd.Command) {
 		newCommands[cmd.Name()] = cmd
 	}
 
-	// Preserve built-in commands (help, status, reload, version)
-	builtins := []string{"help", "status", "reload", "version"}
+	// Preserve built-in commands (help, status, reload, version, scheduled)
+	builtins := []string{"help", "status", "reload", "version", "scheduled"}
 	for _, name := range builtins {
 		if cmd, ok := r.commands[name]; ok {
 			newCommands[name] = cmd

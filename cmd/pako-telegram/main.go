@@ -88,6 +88,8 @@ func run(configPath string) error {
 	reloadCmd := builtin.NewReloadCommand(loader, registry)
 	registry.Register(reloadCmd)
 	registry.Register(builtin.NewVersionCommand())
+	scheduledCmd := builtin.NewScheduledCommand()
+	registry.Register(scheduledCmd)
 
 	// Register podcast command if configured
 	if cfg.Podcast.PodcastgenPath != "" {
@@ -131,6 +133,7 @@ func run(configPath string) error {
 	// Wire scheduler with bot and reload command
 	b.SetScheduler(sched)
 	reloadCmd.SetScheduler(&schedulerAdapter{sched: sched})
+	scheduledCmd.SetScheduleLister(sched)
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

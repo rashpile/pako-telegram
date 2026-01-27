@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -214,6 +215,70 @@ func (s *Scheduler) nextExecution() (time.Time, *ScheduledCommand) {
 	}
 
 	return earliest, earliestCmd
+}
+
+// ActiveCommandInfo contains information about an active scheduled command.
+type ActiveCommandInfo struct {
+	Name     string
+	NextRun  time.Time
+	Interval time.Duration
+	Times    []string // HH:MM format
+}
+
+// ListActive returns all active (non-paused) scheduled commands with their next run times.
+func (s *Scheduler) ListActive() []ActiveCommandInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.commands) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	var result []ActiveCommandInfo
+
+	for i := range s.commands {
+		cmd := &s.commands[i]
+
+		// Skip paused commands
+		if s.paused[cmd.Name] {
+			continue
+		}
+
+		info := ActiveCommandInfo{
+			Name:     cmd.Name,
+			Interval: cmd.Interval,
+		}
+
+		// Calculate next run time
+		if cmd.Interval > 0 {
+			if cmd.lastRun.IsZero() {
+				info.NextRun = now
+			} else {
+				info.NextRun = cmd.lastRun.Add(cmd.Interval)
+			}
+		} else if len(cmd.Times) > 0 {
+			// Find earliest next run from all scheduled times
+			var earliest time.Time
+			for _, t := range cmd.Times {
+				nextRun := nextTimeOfDay(now, t)
+				if earliest.IsZero() || nextRun.Before(earliest) {
+					earliest = nextRun
+				}
+				info.Times = append(info.Times, formatTimeOfDay(t))
+			}
+			info.NextRun = earliest
+		}
+
+		result = append(result, info)
+	}
+
+	return result
+}
+
+// formatTimeOfDay formats a TimeOfDay as HH:MM string.
+func formatTimeOfDay(t TimeOfDay) string {
+	return fmt.Sprintf("%02d:%02d", t.Hour, t.Minute)
 }
 
 // nextTimeOfDay calculates the next occurrence of a time of day.
