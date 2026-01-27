@@ -125,14 +125,12 @@ func run(configPath string) error {
 	}
 	_ = auditLogger // TODO: wire into bot for command logging
 
-	// Extract scheduled commands and create scheduler
+	// Create scheduler (always, even if no scheduled commands yet)
 	sched := createScheduler(yamlCommands, cfg.Telegram.AllowedChatIDs, b)
 
 	// Wire scheduler with bot and reload command
-	if sched != nil {
-		b.SetScheduler(sched)
-		reloadCmd.SetScheduler(&schedulerAdapter{sched: sched})
-	}
+	b.SetScheduler(sched)
+	reloadCmd.SetScheduler(&schedulerAdapter{sched: sched})
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -147,14 +145,12 @@ func run(configPath string) error {
 		cancel()
 	}()
 
-	// Start scheduler in background if configured
-	if sched != nil {
-		go func() {
-			if err := sched.Run(ctx); err != nil && err != context.Canceled {
-				slog.Error("scheduler error", "error", err)
-			}
-		}()
-	}
+	// Start scheduler in background
+	go func() {
+		if err := sched.Run(ctx); err != nil && err != context.Canceled {
+			slog.Error("scheduler error", "error", err)
+		}
+	}()
 
 	// Notify users that bot has restarted
 	b.NotifyStartup()
@@ -175,14 +171,10 @@ func (a *schedulerAdapter) UpdateScheduledCommands(cmds []pkgcmd.Command) {
 	slog.Info("scheduler updated", "scheduled_commands", len(scheduled))
 }
 
-// createScheduler extracts scheduled commands and creates a scheduler.
-// Returns nil if no commands have schedules.
+// createScheduler creates a scheduler and loads any scheduled commands.
+// Always returns a scheduler (even if no commands are scheduled yet).
 func createScheduler(cmds []pkgcmd.Command, chatIDs []int64, exec scheduler.CommandExecutor) *scheduler.Scheduler {
 	scheduled := extractScheduledCommands(cmds)
-
-	if len(scheduled) == 0 {
-		return nil
-	}
 
 	sched := scheduler.New(scheduler.Config{
 		ChatIDs:  chatIDs,
