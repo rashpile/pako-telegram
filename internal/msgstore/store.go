@@ -1,5 +1,5 @@
 // Package msgstore provides persistent storage for sent message IDs.
-// Used to track file messages for later cleanup.
+// Used to track bot messages for later cleanup.
 package msgstore
 
 import (
@@ -9,11 +9,22 @@ import (
 	"time"
 )
 
+// MessageType identifies the type of message.
+type MessageType string
+
+const (
+	// TypeText is a text message.
+	TypeText MessageType = "text"
+	// TypeFile is a file/media message.
+	TypeFile MessageType = "file"
+)
+
 // Entry represents a stored message.
 type Entry struct {
-	ChatID    int64     `json:"chat_id"`
-	MessageID int       `json:"message_id"`
-	SentAt    time.Time `json:"sent_at"`
+	ChatID    int64       `json:"chat_id"`
+	MessageID int         `json:"message_id"`
+	SentAt    time.Time   `json:"sent_at"`
+	Type      MessageType `json:"type,omitempty"` // empty = file (backwards compatible)
 }
 
 // Store manages persistent storage of sent message IDs.
@@ -35,8 +46,13 @@ func New(path string) (*Store, error) {
 	return s, nil
 }
 
-// Add stores a new message entry.
+// Add stores a new message entry (defaults to file type for backwards compatibility).
 func (s *Store) Add(chatID int64, messageID int) error {
+	return s.AddWithType(chatID, messageID, TypeFile)
+}
+
+// AddWithType stores a new message entry with the specified type.
+func (s *Store) AddWithType(chatID int64, messageID int, msgType MessageType) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -44,13 +60,19 @@ func (s *Store) Add(chatID int64, messageID int) error {
 		ChatID:    chatID,
 		MessageID: messageID,
 		SentAt:    time.Now(),
+		Type:      msgType,
 	})
 
 	return s.save()
 }
 
-// AddBatch stores multiple message entries at once.
+// AddBatch stores multiple message entries at once (defaults to file type).
 func (s *Store) AddBatch(chatID int64, messageIDs []int) error {
+	return s.AddBatchWithType(chatID, messageIDs, TypeFile)
+}
+
+// AddBatchWithType stores multiple message entries with the specified type.
+func (s *Store) AddBatchWithType(chatID int64, messageIDs []int, msgType MessageType) error {
 	if len(messageIDs) == 0 {
 		return nil
 	}
@@ -64,6 +86,7 @@ func (s *Store) AddBatch(chatID int64, messageIDs []int) error {
 			ChatID:    chatID,
 			MessageID: msgID,
 			SentAt:    now,
+			Type:      msgType,
 		})
 	}
 
@@ -126,6 +149,20 @@ func (s *Store) GetAfter(chatID int64, after time.Time) []Entry {
 	return result
 }
 
+// GetAfterByType returns entries of specific type sent after the specified time.
+func (s *Store) GetAfterByType(chatID int64, after time.Time, msgType MessageType) []Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []Entry
+	for _, e := range s.entries {
+		if e.ChatID == chatID && e.SentAt.After(after) && e.entryType() == msgType {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // Remove deletes entries by message IDs.
 func (s *Store) Remove(chatID int64, messageIDs []int) error {
 	if len(messageIDs) == 0 {
@@ -165,6 +202,28 @@ func (s *Store) Count(chatID int64) int {
 		}
 	}
 	return count
+}
+
+// CountByType returns the number of stored entries of a specific type for a chat.
+func (s *Store) CountByType(chatID int64, msgType MessageType) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, e := range s.entries {
+		if e.ChatID == chatID && e.entryType() == msgType {
+			count++
+		}
+	}
+	return count
+}
+
+// entryType returns the message type, defaulting to TypeFile for backwards compatibility.
+func (e *Entry) entryType() MessageType {
+	if e.Type == "" {
+		return TypeFile
+	}
+	return e.Type
 }
 
 // Enabled returns true if the store has persistence enabled.

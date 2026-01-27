@@ -13,12 +13,15 @@ import (
 type CleanupOption string
 
 const (
-	CleanupAll            CleanupOption = "all"
-	CleanupLastHour       CleanupOption = "last_hour"
-	CleanupLastDay        CleanupOption = "last_day"
-	CleanupBeforeLastDay  CleanupOption = "before_last_day"
-	CleanupBeforeLastWeek CleanupOption = "before_last_week"
+	CleanupAll             CleanupOption = "all"
+	CleanupLastHour        CleanupOption = "last_hour"
+	CleanupLastDay         CleanupOption = "last_day"
+	CleanupBeforeLastDay   CleanupOption = "before_last_day"
+	CleanupBeforeLastWeek  CleanupOption = "before_last_week"
 	CleanupBeforeLastMonth CleanupOption = "before_last_month"
+	// All messages (text + files) options
+	CleanupAllMsgsLastHour CleanupOption = "all_msgs_last_hour"
+	CleanupAllMsgsLastDay  CleanupOption = "all_msgs_last_day"
 )
 
 // CleanupOptionInfo contains display information for a cleanup option.
@@ -31,11 +34,13 @@ type CleanupOptionInfo struct {
 // CleanupOptions returns all available cleanup options with labels.
 func CleanupOptions() []CleanupOptionInfo {
 	return []CleanupOptionInfo{
-		{CleanupLastHour, "Last hour", "Delete files sent in the last hour"},
-		{CleanupLastDay, "Last 24 hours", "Delete files sent in the last 24 hours"},
-		{CleanupBeforeLastDay, "Older than 1 day", "Delete files sent more than 24 hours ago"},
-		{CleanupBeforeLastWeek, "Older than 1 week", "Delete files sent more than 7 days ago"},
-		{CleanupBeforeLastMonth, "Older than 1 month", "Delete files sent more than 30 days ago"},
+		{CleanupAllMsgsLastHour, "All messages (1h)", "Delete ALL messages from the last hour"},
+		{CleanupAllMsgsLastDay, "All messages (24h)", "Delete ALL messages from the last 24 hours"},
+		{CleanupLastHour, "Files (1h)", "Delete files sent in the last hour"},
+		{CleanupLastDay, "Files (24h)", "Delete files sent in the last 24 hours"},
+		{CleanupBeforeLastDay, "Files older 1d", "Delete files sent more than 24 hours ago"},
+		{CleanupBeforeLastWeek, "Files older 1w", "Delete files sent more than 7 days ago"},
+		{CleanupBeforeLastMonth, "Files older 1mo", "Delete files sent more than 30 days ago"},
 		{CleanupAll, "All files", "Delete all tracked files"},
 	}
 }
@@ -83,12 +88,18 @@ func (c *CleanupCommand) GetEntriesToDelete(chatID int64, option CleanupOption) 
 	now := time.Now()
 
 	switch option {
-	case CleanupAll:
-		return c.store.GetAll(chatID)
-	case CleanupLastHour:
+	// All messages (text + files) options
+	case CleanupAllMsgsLastHour:
 		return c.store.GetAfter(chatID, now.Add(-time.Hour))
-	case CleanupLastDay:
+	case CleanupAllMsgsLastDay:
 		return c.store.GetAfter(chatID, now.Add(-24*time.Hour))
+	// File-only options (backwards compatible - GetAfterByType filters by type)
+	case CleanupAll:
+		return c.store.GetAll(chatID) // All tracked (mostly files for backwards compat)
+	case CleanupLastHour:
+		return c.store.GetAfterByType(chatID, now.Add(-time.Hour), msgstore.TypeFile)
+	case CleanupLastDay:
+		return c.store.GetAfterByType(chatID, now.Add(-24*time.Hour), msgstore.TypeFile)
 	case CleanupBeforeLastDay:
 		return c.store.GetBefore(chatID, now.Add(-24*time.Hour))
 	case CleanupBeforeLastWeek:

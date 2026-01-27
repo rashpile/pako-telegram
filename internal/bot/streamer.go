@@ -90,6 +90,11 @@ func (ms *MessageStreamer) Content() string {
 	return ms.buffer.String()
 }
 
+// MessageID returns the ID of the message being edited.
+func (ms *MessageStreamer) MessageID() int {
+	return ms.messageID
+}
+
 // editMessage updates the Telegram message with current buffer contents.
 // Must be called with mutex held.
 func (ms *MessageStreamer) editMessage() {

@@ -434,6 +434,9 @@ func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Comma
 		return
 	}
 
+	// Track the output message for cleanup
+	b.trackMessage(chatID, streamer.MessageID(), msgstore.TypeText)
+
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -592,12 +595,17 @@ func (b *Bot) handleFileReferences(chatID int64, output string, workdir string) 
 	}
 }
 
-// sendText sends a simple text message.
+// sendText sends a simple text message and tracks it for cleanup.
 func (b *Bot) sendText(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := b.api.Send(msg); err != nil {
+	sent, err := b.api.Send(msg)
+	if err != nil {
 		slog.Error("failed to send message", "error", err, "chat_id", chatID)
+		return
 	}
+
+	// Track message for cleanup
+	b.trackMessage(chatID, sent.MessageID, msgstore.TypeText)
 }
 
 // parseArgs splits command arguments into a slice.
@@ -827,6 +835,9 @@ func (b *Bot) executeRenderedCommand(ctx context.Context, chatID int64, cmd *com
 		return
 	}
 
+	// Track the output message for cleanup
+	b.trackMessage(chatID, streamer.MessageID(), msgstore.TypeText)
+
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -1047,5 +1058,15 @@ func (b *Bot) handleScheduleCallback(ctx context.Context, query *tgbotapi.Callba
 		deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
 		b.api.Request(deleteMsg)
 		b.showScheduleMenu(chatID, yamlCmd)
+	}
+}
+
+// trackMessage stores a message ID for later cleanup.
+func (b *Bot) trackMessage(chatID int64, messageID int, msgType msgstore.MessageType) {
+	if b.msgStore == nil || !b.msgStore.Enabled() {
+		return
+	}
+	if err := b.msgStore.AddWithType(chatID, messageID, msgType); err != nil {
+		slog.Warn("failed to track message", "chat_id", chatID, "message_id", messageID, "error", err)
 	}
 }
