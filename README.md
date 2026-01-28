@@ -103,6 +103,7 @@ schedule:              # Run at specific times (HH:MM format)
   - "18:00"
 interval: 5m           # Run every X duration (e.g., 5m, 1h)
 initial_paused: false  # Start with schedule paused (default: false)
+quiet: false           # Suppress "Running..." messages (default: false)
 ```
 
 ## File Output Format
@@ -161,6 +162,15 @@ interval: 5m
   - **Pause/Resume schedule** - Toggle automatic execution
 - Pause state is kept in memory (resets on bot restart)
 - Use `initial_paused: true` to start commands paused
+- Use `quiet: true` to suppress "Running /cmd..." messages and hide file-only output text
+
+**Quiet mode** is useful for file-generating commands where you only want to see the file, not the output text:
+```yaml
+name: daily-image
+command: "echo '[file:/path/to/image.jpg]'"
+interval: 1h
+quiet: true  # Only sends the file, no "Running..." or "[file:...]" text
+```
 
 **Note:** Commands with arguments cannot be scheduled.
 

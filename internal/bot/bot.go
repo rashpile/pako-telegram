@@ -318,13 +318,25 @@ func (b *Bot) handleMenuCallback(ctx context.Context, query *tgbotapi.CallbackQu
 			}
 		}
 
-		// Update message to show execution
-		edit := tgbotapi.NewEditMessageText(chatID, messageID, fmt.Sprintf("Running /%s...", value))
-		b.api.Send(edit)
+		// Check if quiet mode
+		quiet := false
+		if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+			quiet = yamlCmd.Quiet()
+		}
+
+		if quiet {
+			// In quiet mode, delete menu immediately
+			deleteMsg := tgbotapi.NewDeleteMessage(chatID, messageID)
+			b.api.Request(deleteMsg)
+		} else {
+			// Update message to show execution
+			edit := tgbotapi.NewEditMessageText(chatID, messageID, fmt.Sprintf("Running /%s...", value))
+			b.api.Send(edit)
+		}
 
 		// Execute command
 		logger.Info("executing command from menu", "command", value)
-		b.executeCommand(ctx, chatID, cmd, nil)
+		b.executeCommandWithOptions(ctx, chatID, cmd, nil, quiet)
 
 		// Show menu again for quick access to next command
 		b.sendMenu(chatID)
@@ -416,6 +428,12 @@ func (b *Bot) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 
 // executeCommand runs a command and streams output.
 func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Command, args []string) {
+	b.executeCommandWithOptions(ctx, chatID, cmd, args, false)
+}
+
+// executeCommandWithOptions runs a command with optional quiet mode.
+// In quiet mode, if output is only file references (no text), the output message is deleted.
+func (b *Bot) executeCommandWithOptions(ctx context.Context, chatID int64, cmd pkgcmd.Command, args []string, quiet bool) {
 	logger := slog.With("chat_id", chatID, "command", cmd.Name())
 
 	// Get timeout from metadata or use default
@@ -434,7 +452,7 @@ func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Comma
 		return
 	}
 
-	// Track the output message for cleanup
+	// Track the output message for cleanup (unless quiet mode deletes it)
 	b.trackMessage(chatID, streamer.MessageID(), msgstore.TypeText)
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -450,14 +468,27 @@ func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Comma
 		logger.Error("failed to flush output", "error", err)
 	}
 
+	// Get workdir if this is a YAML command
+	workdir := ""
+	if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+		workdir = yamlCmd.Workdir()
+	}
+
 	// Handle file references in output (if any)
 	if execErr == nil {
-		// Get workdir if this is a YAML command
-		workdir := ""
-		if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
-			workdir = yamlCmd.Workdir()
+		output := streamer.Content()
+		if fileref.HasFiles(output) {
+			result := fileref.ParseOutput(output, workdir)
+
+			// In quiet mode, if there's no text after removing file refs, delete the message
+			if quiet && strings.TrimSpace(result.Text) == "" && len(result.Files) > 0 {
+				deleteMsg := tgbotapi.NewDeleteMessage(chatID, streamer.MessageID())
+				b.api.Request(deleteMsg)
+			}
+
+			// Send files
+			b.handleFileReferencesWithResult(chatID, result)
 		}
-		b.handleFileReferences(chatID, streamer.Content(), workdir)
 	}
 
 	// Handle file response if command supports it
@@ -566,8 +597,13 @@ func (b *Bot) handleFileReferences(chatID int64, output string, workdir string) 
 		return
 	}
 
-	logger := slog.With("chat_id", chatID)
 	result := fileref.ParseOutput(output, workdir)
+	b.handleFileReferencesWithResult(chatID, result)
+}
+
+// handleFileReferencesWithResult sends files from a pre-parsed result.
+func (b *Bot) handleFileReferencesWithResult(chatID int64, result fileref.ParseResult) {
+	logger := slog.With("chat_id", chatID)
 
 	// If there are errors (missing files), send them as a message
 	if len(result.Errors) > 0 {
@@ -871,11 +907,19 @@ func (b *Bot) ExecuteScheduled(ctx context.Context, chatID int64, cmd pkgcmd.Com
 	logger := slog.With("chat_id", chatID, "command", cmd.Name(), "trigger", "schedule")
 	logger.Info("executing scheduled command")
 
-	// Send notification
-	b.sendText(chatID, fmt.Sprintf("Scheduled: Running /%s...", cmd.Name()))
+	// Check if quiet mode
+	quiet := false
+	if yamlCmd, ok := cmd.(*command.YAMLCommand); ok {
+		quiet = yamlCmd.Quiet()
+	}
+
+	// Send notification unless quiet
+	if !quiet {
+		b.sendText(chatID, fmt.Sprintf("Scheduled: Running /%s...", cmd.Name()))
+	}
 
 	// Execute command (confirmation is skipped for scheduled runs)
-	b.executeCommand(ctx, chatID, cmd, nil)
+	b.executeCommandWithOptions(ctx, chatID, cmd, nil, quiet)
 
 	return nil
 }
@@ -1033,8 +1077,11 @@ func (b *Bot) handleScheduleCallback(ctx context.Context, query *tgbotapi.Callba
 		b.api.Request(deleteMsg)
 
 		logger.Info("executing scheduled command manually", "command", cmdName)
-		b.sendText(chatID, fmt.Sprintf("Running /%s...", cmdName))
-		b.executeCommand(ctx, chatID, cmd, nil)
+		quiet := yamlCmd.Quiet()
+		if !quiet {
+			b.sendText(chatID, fmt.Sprintf("Running /%s...", cmdName))
+		}
+		b.executeCommandWithOptions(ctx, chatID, cmd, nil, quiet)
 		b.sendMenu(chatID)
 
 	case "pause":

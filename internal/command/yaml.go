@@ -42,6 +42,7 @@ type YAMLCommandDef struct {
 	Schedule        []string      `yaml:"schedule"`       // List of "HH:MM" times for scheduled execution
 	Interval        time.Duration `yaml:"interval"`       // Interval for periodic execution (e.g., "5m")
 	InitialPaused   bool          `yaml:"initial_paused"` // Start with schedule paused
+	Quiet           bool          `yaml:"quiet"`          // Suppress "Running..." messages and file-only output
 }
 
 // YAMLCommand is a Command implementation backed by a shell command.
@@ -153,6 +154,12 @@ func (y *YAMLCommand) Interval() time.Duration {
 // InitialPaused returns true if the command should start with schedule paused.
 func (y *YAMLCommand) InitialPaused() bool {
 	return y.def.InitialPaused
+}
+
+// Quiet returns true if the command should suppress "Running..." messages
+// and delete file-only output messages.
+func (y *YAMLCommand) Quiet() bool {
+	return y.def.Quiet
 }
 
 // Loader loads YAML command definitions from a directory.
