@@ -487,7 +487,13 @@ func (b *Bot) executeCommandWithOptions(ctx context.Context, chatID int64, cmd p
 		if fileref.HasFiles(output) {
 			result := fileref.ParseOutput(output, workdir)
 
-			// Send files (in quiet mode, no text message was created)
+			// In quiet mode with file-only output, delete the streamer message if it exists
+			if quiet && strings.TrimSpace(result.Text) == "" && len(result.Files) > 0 && streamer.MessageID() != 0 {
+				deleteMsg := tgbotapi.NewDeleteMessage(chatID, streamer.MessageID())
+				b.api.Request(deleteMsg)
+			}
+
+			// Send files
 			b.handleFileReferencesWithResult(chatID, result)
 		}
 	}
