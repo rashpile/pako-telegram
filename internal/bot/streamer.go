@@ -22,6 +22,7 @@ type MessageStreamer struct {
 	api       *tgbotapi.BotAPI
 	chatID    int64
 	messageID int
+	quiet     bool
 
 	mu       sync.Mutex
 	buffer   bytes.Buffer
@@ -37,8 +38,23 @@ func NewMessageStreamer(api *tgbotapi.BotAPI, chatID int64) *MessageStreamer {
 	}
 }
 
+// NewQuietMessageStreamer creates a streamer that doesn't show "Running..." message.
+// Output is buffered silently without sending messages.
+func NewQuietMessageStreamer(api *tgbotapi.BotAPI, chatID int64) *MessageStreamer {
+	return &MessageStreamer{
+		api:    api,
+		chatID: chatID,
+		quiet:  true,
+	}
+}
+
 // Start sends an initial "Running..." message and stores its ID.
+// In quiet mode, this is a no-op.
 func (ms *MessageStreamer) Start(ctx context.Context) error {
+	if ms.quiet {
+		return nil
+	}
+
 	msg := tgbotapi.NewMessage(ms.chatID, "```\nRunning...\n```")
 	msg.ParseMode = "Markdown"
 
@@ -98,6 +114,12 @@ func (ms *MessageStreamer) MessageID() int {
 // editMessage updates the Telegram message with current buffer contents.
 // Must be called with mutex held.
 func (ms *MessageStreamer) editMessage() {
+	// In quiet mode, just mark as not dirty - no message updates
+	if ms.quiet {
+		ms.dirty = false
+		return
+	}
+
 	content := ms.buffer.String()
 	if content == "" {
 		content = "(no output)"

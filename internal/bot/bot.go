@@ -432,7 +432,7 @@ func (b *Bot) executeCommand(ctx context.Context, chatID int64, cmd pkgcmd.Comma
 }
 
 // executeCommandWithOptions runs a command with optional quiet mode.
-// In quiet mode, if output is only file references (no text), the output message is deleted.
+// In quiet mode, no "Running..." message is shown and file-only output is silent.
 func (b *Bot) executeCommandWithOptions(ctx context.Context, chatID int64, cmd pkgcmd.Command, args []string, quiet bool) {
 	logger := slog.With("chat_id", chatID, "command", cmd.Name())
 
@@ -446,14 +446,21 @@ func (b *Bot) executeCommandWithOptions(ctx context.Context, chatID int64, cmd p
 	}
 
 	// Execute command with streaming output
-	streamer := NewMessageStreamer(b.api, chatID)
+	var streamer *MessageStreamer
+	if quiet {
+		streamer = NewQuietMessageStreamer(b.api, chatID)
+	} else {
+		streamer = NewMessageStreamer(b.api, chatID)
+	}
 	if err := streamer.Start(ctx); err != nil {
 		logger.Error("failed to start streamer", "error", err)
 		return
 	}
 
-	// Track the output message for cleanup (unless quiet mode deletes it)
-	b.trackMessage(chatID, streamer.MessageID(), msgstore.TypeText)
+	// Track the output message for cleanup (only if message was created)
+	if streamer.MessageID() != 0 {
+		b.trackMessage(chatID, streamer.MessageID(), msgstore.TypeText)
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -480,13 +487,7 @@ func (b *Bot) executeCommandWithOptions(ctx context.Context, chatID int64, cmd p
 		if fileref.HasFiles(output) {
 			result := fileref.ParseOutput(output, workdir)
 
-			// In quiet mode, if there's no text after removing file refs, delete the message
-			if quiet && strings.TrimSpace(result.Text) == "" && len(result.Files) > 0 {
-				deleteMsg := tgbotapi.NewDeleteMessage(chatID, streamer.MessageID())
-				b.api.Request(deleteMsg)
-			}
-
-			// Send files
+			// Send files (in quiet mode, no text message was created)
 			b.handleFileReferencesWithResult(chatID, result)
 		}
 	}
